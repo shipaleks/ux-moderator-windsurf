@@ -235,13 +235,21 @@ async def clone_agent(variables: Dict[str, Any]) -> Dict[str, str]:
     params = {**dynamic_vars, "agent_id": agent_id}
     async with aiohttp.ClientSession() as signed_session:
         async with signed_session.get(signed_url, headers=headers, params=params) as resp_signed:
+            try:
+                body_text = await resp_signed.text()
+            except Exception:
+                body_text = "<could not read body>"
+            logger.debug("Signed URL status=%s body=%s", resp_signed.status, body_text)
             if resp_signed.status in (200, 201):
-                signed_data = await resp_signed.json()
-                logger.debug("ElevenLabs signed URL response: %s", signed_data)
-                signed_url = signed_data.get("url")
-                if signed_url:
-                    logger.info("Using signed URL with overrides: %s", signed_url)
-                    return {"agent_id": agent_id, "share_url": signed_url}
+                try:
+                    signed_data = json.loads(body_text)
+                except Exception:
+                    signed_data = {}
+                signed_url_value = signed_data.get("url") or signed_data.get("signed_url")
+                if signed_url_value:
+                    logger.info("Using signed URL with overrides: %s", signed_url_value)
+                    return {"agent_id": agent_id, "share_url": signed_url_value}
+                logger.warning("Signed URL success response missing url field: %s", signed_data)
 
     # 2) since variables are now embedded in agent, use the simple share_url
     logger.info("Variables embedded in agent config, using public share URL: %s", share_url)
