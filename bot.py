@@ -119,6 +119,7 @@ async def clone_agent(variables: Dict[str, Any]) -> Dict[str, str]:
                 raise RuntimeError(f"Failed to get base agent: {resp.status} {await resp.text()}")
             base_agent_data = await resp.json()
             base_conv_config = base_agent_data.get("conversation_config", {})
+            logger.debug("Base agent conversation_config: %s", base_conv_config)
 
     # map keys to agent variable names
     dynamic_vars = {
@@ -132,6 +133,7 @@ async def clone_agent(variables: Dict[str, Any]) -> Dict[str, str]:
     modified_config = base_conv_config.copy()
     if "system_prompt" in modified_config:
         original_prompt = modified_config["system_prompt"]
+        logger.debug("Original system_prompt: %s", original_prompt)
         # Replace placeholders with actual values
         modified_config["system_prompt"] = original_prompt.replace(
             "{{interview_topic}}", dynamic_vars.get("interview_topic", "[тема не указана]")
@@ -142,10 +144,14 @@ async def clone_agent(variables: Dict[str, Any]) -> Dict[str, str]:
         ).replace(
             "{{additional_instructions}}", dynamic_vars.get("additional_instructions", "")
         )
+        logger.debug("Modified system_prompt: %s", modified_config["system_prompt"])
+    else:
+        logger.warning("No system_prompt found in base agent config")
         
     # Also replace in first_message if it exists
     if "first_message" in modified_config:
         original_first = modified_config["first_message"]
+        logger.debug("Original first_message: %s", original_first)
         modified_config["first_message"] = original_first.replace(
             "{{interview_topic}}", dynamic_vars.get("interview_topic", "[тема не указана]")
         ).replace(
@@ -155,6 +161,9 @@ async def clone_agent(variables: Dict[str, Any]) -> Dict[str, str]:
         ).replace(
             "{{additional_instructions}}", dynamic_vars.get("additional_instructions", "")
         )
+        logger.debug("Modified first_message: %s", modified_config["first_message"])
+    else:
+        logger.warning("No first_message found in base agent config")
 
     # 1.6) create new agent by cloning with modified config
     name = f"UX-Интервьюер-{dynamic_vars.get('interview_topic', 'Topic')[:20]}"
@@ -165,6 +174,7 @@ async def clone_agent(variables: Dict[str, Any]) -> Dict[str, str]:
         "description": dynamic_vars.get("interview_goals", ""),
         "conversation_config": modified_config,
     }
+    logger.debug("Agent creation payload: %s", payload)
     async with aiohttp.ClientSession() as session:
         async with session.post(create_url, headers=headers, json=payload) as resp:
             if resp.status not in (200, 201):
