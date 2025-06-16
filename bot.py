@@ -13,6 +13,7 @@ import hashlib
 import math
 import json
 import tempfile
+import time
 from aiohttp import web
 from googleapiclient.http import MediaInMemoryUpload
 
@@ -101,6 +102,51 @@ def create_drive_folder(topic: str) -> Dict[str, str]:
     service.permissions().create(fileId=folder["id"], body=permission_body).execute()
 
     return {"id": folder["id"], "link": folder.get("webViewLink")}
+
+async def fetch_and_upload_audio(conv_id: str, folder_id: str):
+    """Poll ElevenLabs Conversation API until mp3 is ready, then upload to Drive."""
+    api_key = ELEVENLABS_API_KEY
+    if not api_key:
+        logger.warning("ELEVENLABS_API_KEY not set; cannot fetch audio")
+        return
+    headers = {"xi-api-key": api_key}
+    details_url = f"https://api.elevenlabs.io/v1/convai/conversations/{conv_id}"
+    audio_url = f"https://api.elevenlabs.io/v1/convai/conversations/{conv_id}/audio"
+    async with aiohttp.ClientSession(headers=headers) as session:
+        start = time.time()
+        while time.time() - start < 90:
+            try:
+                async with session.get(details_url, timeout=20) as resp:
+                    if resp.status != 200:
+                        logger.warning("conv details %s -> %s", conv_id, resp.status)
+                        await asyncio.sleep(5)
+                        continue
+                    meta = await resp.json()
+                    if meta.get("status") == "done" and meta.get("has_audio"):
+                        break
+            except Exception as e:
+                logger.warning("conv details error: %s", e)
+            await asyncio.sleep(5)
+        else:
+            logger.warning("Audio not ready for %s within timeout", conv_id)
+            return
+        # download
+        try:
+            async with session.get(audio_url, timeout=60) as aresp:
+                if aresp.status != 200:
+                    logger.warning("audio download %s -> %s", conv_id, aresp.status)
+                    return
+                audio_bytes = await aresp.read()
+        except Exception as e:
+            logger.exception("audio download failed: %s", e)
+            return
+    try:
+        service = _drive_service()
+        media_mp3 = MediaInMemoryUpload(audio_bytes, mimetype="audio/mpeg", resumable=False)
+        service.files().create(body={"name": f"{conv_id}.mp3", "parents": [folder_id]}, media_body=media_mp3).execute()
+        logger.info("Uploaded audio mp3 for %s", conv_id)
+    except Exception as e:
+        logger.exception("Drive upload mp3 failed: %s", e)
 
 # ---------------------------------------------------------------------------
 # ElevenLabs helpers
@@ -319,7 +365,7 @@ async def elevenlabs_webhook(request: web.Request):
                 service.files().create(body={"name": f"{convo_id}.vtt", "parents": [fid]}, media_body=media_vtt).execute()
                 logger.info("Uploaded transcript TXT and VTT for %s", convo_id)
                 # trigger audio fetch in background
-                asyncio.create_task(fetch_and_upload_audio(convo_id))
+                asyncio.create_task(fetch_and_upload_audio(convo_id, fid))
             except Exception as e:
                 logger.exception("Failed to upload transcript/VTT: %s", e)
 
