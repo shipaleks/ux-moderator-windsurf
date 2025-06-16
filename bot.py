@@ -1,0 +1,201 @@
+"""Telegram bot that creates cloned ElevenLabs interview agents and Google Drive folders.
+Minimal MVP.
+"""
+
+import asyncio
+import logging
+import os
+from datetime import datetime
+from typing import Dict, Any
+
+import aiohttp
+from dotenv import load_dotenv
+from google.oauth2.service_account import Credentials
+from googleapiclient.discovery import build
+from telegram import Update, ReplyKeyboardRemove
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    ContextTypes,
+    ConversationHandler,
+    MessageHandler,
+    filters,
+)
+
+# ---------------------------------------------------------------------------
+# Environment & Logging
+# ---------------------------------------------------------------------------
+load_dotenv()
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
+)
+logger = logging.getLogger(__name__)
+
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY")
+ELEVENLABS_BASE_AGENT_ID = os.getenv("ELEVENLABS_BASE_AGENT_ID")
+GOOGLE_SERVICE_ACCOUNT_JSON = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON", "service_account.json")
+GOOGLE_DRIVE_PARENT_FOLDER_ID = os.getenv("GOOGLE_DRIVE_PARENT_FOLDER_ID")
+
+REQUIRED_ENV_VARS = [
+    "TELEGRAM_BOT_TOKEN",
+    "ELEVENLABS_API_KEY",
+    "ELEVENLABS_BASE_AGENT_ID",
+    "GOOGLE_DRIVE_PARENT_FOLDER_ID",
+]
+missing_env = [var for var in REQUIRED_ENV_VARS if not os.getenv(var)]
+if missing_env:
+    raise EnvironmentError(f"Missing environment variables: {', '.join(missing_env)}")
+
+# ---------------------------------------------------------------------------
+# Google Drive helpers
+# ---------------------------------------------------------------------------
+_SCOPES = [
+    "https://www.googleapis.com/auth/drive.file",
+    "https://www.googleapis.com/auth/drive.metadata.readonly",
+]
+
+def _drive_service():
+    creds = Credentials.from_service_account_file(GOOGLE_SERVICE_ACCOUNT_JSON, scopes=_SCOPES)
+    return build("drive", "v3", credentials=creds)
+
+async def create_drive_folder(topic: str) -> Dict[str, str]:
+    """Create a folder for the user, return {id, link}."""
+    service = _drive_service()
+    metadata = {
+        "name": f"UX-Interview-{topic}-{datetime.utcnow().strftime('%Y%m%dT%H%M%S')}",
+        "mimeType": "application/vnd.google-apps.folder",
+        "parents": [GOOGLE_DRIVE_PARENT_FOLDER_ID],
+    }
+    folder = service.files().create(body=metadata, fields="id, webViewLink, webContentLink").execute()
+
+    # Make anyone-w-link viewer (simple)
+    permission_body = {
+        "type": "anyone",
+        "role": "reader",
+    }
+    service.permissions().create(fileId=folder["id"], body=permission_body).execute()
+
+    return {"id": folder["id"], "link": folder.get("webViewLink")}
+
+# ---------------------------------------------------------------------------
+# ElevenLabs helpers
+# ---------------------------------------------------------------------------
+ELEVEN_API_BASE = "https://api.elevenlabs.io/v1"
+
+async def clone_agent(variables: Dict[str, Any]) -> Dict[str, str]:
+    """Clone base agent and return {agent_id, share_url}."""
+    url = f"{ELEVEN_API_BASE}/agents/{ELEVENLABS_BASE_AGENT_ID}/clone"
+    headers = {
+        "xi-api-key": ELEVENLABS_API_KEY,
+        "Content-Type": "application/json",
+    }
+    name = f"UX Interviewer - {variables['interview_topic']} - {datetime.utcnow().strftime('%Y%m%dT%H%M%S')}"
+    payload = {
+        "name": name,
+        "description": variables.get("interview_goal", ""),
+    }
+    async with aiohttp.ClientSession() as session:
+        async with session.post(url, headers=headers, json=payload) as resp:
+            if resp.status != 200:
+                text = await resp.text()
+                raise RuntimeError(f"Failed to clone agent: {resp.status} {text}")
+            data = await resp.json()
+    return {
+        "agent_id": data["agent_id"],
+        "share_url": data.get("share_link", {}).get("url", ""),
+    }
+
+# ---------------------------------------------------------------------------
+# Telegram conversation states
+# ---------------------------------------------------------------------------
+TOPIC, GOAL, DURATION = range(3)
+
+# Temporary storage for user answers in-memory (user_id -> dict)
+user_answers: Dict[int, Dict[str, str]] = {}
+
+# ---------------------------------------------------------------------------
+# Handlers
+# ---------------------------------------------------------------------------
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    await update.message.reply_text(
+        "Привет! Я помогу создать UX-интервьюера. Давай начнём.\n\n"
+        "1/3 \U0001F4D6   Введите тему интервью (например: мобильное банк приложение)"
+    )
+    user_answers[update.effective_user.id] = {}
+    return TOPIC
+
+async def topic(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    user_answers[update.effective_user.id]["interview_topic"] = update.message.text.strip()
+    await update.message.reply_text("2/3 \🎯   Какова цель интервью? (одна строка)")
+    return GOAL
+
+async def goal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    user_answers[update.effective_user.id]["interview_goal"] = update.message.text.strip()
+    await update.message.reply_text("3/3 ⏱️   Планируемая длительность в минутах?")
+    return DURATION
+
+async def duration(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    user_data = user_answers.get(update.effective_user.id, {})
+    user_data["interview_duration"] = update.message.text.strip()
+
+    await update.message.reply_text("⏳ Создаю агента и папку, подождите пару секунд…", reply_markup=ReplyKeyboardRemove())
+
+    # 1. Create Drive folder
+    try:
+        folder_info = await asyncio.to_thread(create_drive_folder, user_data["interview_topic"])
+    except Exception as e:
+        logger.exception("Drive error")
+        await update.message.reply_text(f"Ошибка создания папки на Google Drive: {e}")
+        return ConversationHandler.END
+
+    # 2. Clone ElevenLabs agent
+    try:
+        agent_info = await clone_agent(user_data)
+    except Exception as e:
+        logger.exception("ElevenLabs error")
+        await update.message.reply_text(f"Ошибка ElevenLabs: {e}")
+        return ConversationHandler.END
+
+    # 3. Reply with links
+    reply = (
+        "Готово! \U0001F389\n\n"
+        f"• Ссылка на агента: {agent_info['share_url']}\n"
+        f"• Папка Google Drive: {folder_info['link']}\n\n"
+        "Передайте ссылку на агента своим респондентам. Аудиозаписи будут сохраняться в указанную папку. Удачи!"
+    )
+    await update.message.reply_text(reply)
+
+    # Clean up user data
+    user_answers.pop(update.effective_user.id, None)
+    return ConversationHandler.END
+
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    user_answers.pop(update.effective_user.id, None)
+    await update.message.reply_text("Диалог отменён.", reply_markup=ReplyKeyboardRemove())
+    return ConversationHandler.END
+
+# ---------------------------------------------------------------------------
+# Main entry
+# ---------------------------------------------------------------------------
+
+def main() -> None:
+    application = Application.builder().token(TELEGRAM_TOKEN).build()
+
+    conv_handler = ConversationHandler(
+        entry_points=[CommandHandler("start", start)],
+        states={
+            TOPIC: [MessageHandler(filters.TEXT & ~filters.COMMAND, topic)],
+            GOAL: [MessageHandler(filters.TEXT & ~filters.COMMAND, goal)],
+            DURATION: [MessageHandler(filters.TEXT & ~filters.COMMAND, duration)],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+    )
+
+    application.add_handler(conv_handler)
+
+    logger.info("Bot started…")
+    application.run_polling()
+
+if __name__ == "__main__":
+    main()

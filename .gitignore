@@ -1,0 +1,19 @@
+# Python bytecode and cache
+__pycache__/
+*.py[cod]
+
+# Virtual environments
+.env
+.venv
+venv/
+
+# IDE / Editor configs
+.idea/
+.vscode/
+
+# macOS
+.DS_Store
+
+# Secrets
+.env.*
+service_account.json
