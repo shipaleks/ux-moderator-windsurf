@@ -135,7 +135,7 @@ async def clone_agent(variables: Dict[str, Any]) -> Dict[str, str]:
         "from_agent_id": ELEVENLABS_BASE_AGENT_ID,
         "name": name,
         "description": dynamic_vars.get("interview_goals", ""),
-        "conversation_config": base_conv_config,
+        "conversation_config": {**base_conv_config, "dynamic_variables": {k: v for k, v in dynamic_vars.items() if v}},
     }
     async with aiohttp.ClientSession() as session:
         async with session.post(create_url, headers=headers, json=payload) as resp:
@@ -194,28 +194,21 @@ async def clone_agent(variables: Dict[str, Any]) -> Dict[str, str]:
     # 2) get signed URL injecting dynamic variables
     signed_payload = {
         "agent_id": agent_id,
-        "expires_in_seconds": 3600,
+        "expires_in_seconds": 900,
         "conversation_config_override": {
             "dynamic_variables": {k: v for k, v in dynamic_vars.items() if v}
         },
     }
-    # Endpoint now uses singular 'conversation' and expects GET (POST returns 405)
-    import urllib.parse, json as _json
-    query_params = {
-        "agent_id": agent_id,
-        "expires_in_seconds": 900,  # max allowed
-        "conversation_config_override": _json.dumps({
-            "dynamic_variables": {k: v for k, v in dynamic_vars.items() if v}
-        }),
-    }
-    signed_url_endpoint = f"{ELEVEN_API_BASE}/conversation/get-signed-url?" + urllib.parse.urlencode(query_params)
+    # Correct endpoint: POST /conversation/get-signed-url with JSON body (allows dynamic_variables)
+    signed_url_endpoint = f"{ELEVEN_API_BASE}/conversation/get-signed-url"
     async with aiohttp.ClientSession() as session:
-        async with session.get(signed_url_endpoint, headers=headers) as signed_resp:
+        async with session.post(signed_url_endpoint, headers=headers, json=signed_payload) as signed_resp:
             if signed_resp.status not in (200, 201):
                 raise RuntimeError(
                     f"Failed to get signed URL: {signed_resp.status} {await signed_resp.text()}"
                 )
             signed_data = await signed_resp.json()
+            logger.debug("Signed URL response: %s", signed_data)
             share_url = signed_data.get("url") or share_url  # fallback to previous
 
     return {"agent_id": agent_id, "share_url": share_url}
