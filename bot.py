@@ -260,9 +260,12 @@ async def elevenlabs_webhook(request: web.Request):
 
         # fid can be in conversation_initiation_client_data or in dynamic_variables
         cicd = inner.get("conversation_initiation_client_data", {})
-        fid = cicd.get("fid") or cicd.get("folder_id")
-        if not fid:
-            fid = inner.get("dynamic_variables", {}).get("fid")
+        fid = (
+            cicd.get("fid") or
+            cicd.get("folder_id") or
+            cicd.get("dynamic_variables", {}).get("fid") or
+            inner.get("dynamic_variables", {}).get("fid")
+        )
         
         transcript = inner.get("transcript")
 
