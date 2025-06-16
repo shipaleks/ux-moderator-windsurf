@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>UX-Interview</title>
+  <script src="https://unpkg.com/@elevenlabs/convai-widget-embed" async></script>
+  <link href="https://cdn.jsdelivr.net/npm/tailwindcss@3.4.4/dist/tailwind.min.css" rel="stylesheet">
+</head>
+<body class="min-h-screen flex items-center justify-center bg-neutral-50">
+  <!--
+    The ElevenLabs agent widget.  agent-id может приходить как query param ?agent_id=...
+    либо быть захардкожен здесь.  Если не указан, замените DEFAULT_AGENT_ID ниже.
+  -->
+  <elevenlabs-convai id="widget" agent-id="DEFAULT_AGENT_ID"></elevenlabs-convai>
+
+  <script>
+    // Берём параметры URL
+    const p = new URLSearchParams(window.location.search);
+
+    // agent_id можно передать параметром, иначе используется тот, что в атрибуте
+    const agentId = p.get('agent_id');
+    if (agentId) {
+      document.getElementById('widget').setAttribute('agent-id', agentId);
+    }
+
+    // Собираем dynamic variables (любой параметр, кроме agent_id)
+    const dyn = {};
+    p.forEach((value, key) => {
+      if (key !== 'agent_id') {
+        dyn[key] = value;
+      }
+    });
+    // Записываем их в атрибут dynamic-variables
+    document.getElementById('widget')
+            .setAttribute('dynamic-variables', JSON.stringify(dyn));
+  </script>
+</body>
+</html>
