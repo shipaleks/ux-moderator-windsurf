@@ -264,38 +264,46 @@ async def elevenlabs_webhook(request: web.Request):
         if not fid:
             fid = inner.get("dynamic_variables", {}).get("fid")
         
-        if not audio_url:
-            logger.warning("No audio_url in webhook payload")
-            return web.Response(text="No audio URL", status=400)
-            
+        transcript = inner.get("transcript")
+
+        if not audio_url and not transcript:
+            logger.warning("Neither audio nor transcript in webhook payload")
+            return web.Response(text="No audio or transcript", status=400)
+
         if not fid:
             logger.warning("No fid in webhook payload")
             return web.Response(text="No folder ID", status=400)
-        
-        logger.info("Webhook received: audio=%s folder=%s", audio_url, fid)
 
-        # Download audio
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(audio_url) as resp:
-                    if resp.status != 200:
-                        raise RuntimeError(f"audio download failed {resp.status}")
-                    audio_bytes = await resp.read()
-                    filename = audio_url.split("/")[-1].split("?")[0] or f"recording.mp3"
-        except Exception as e:
-            logger.exception("Failed to download audio: %s", e)
-            return web.Response(status=500)
+        service = _drive_service()
 
-        # Upload to Drive
-        try:
-            service = _drive_service()
-            media = MediaInMemoryUpload(audio_bytes, mimetype="audio/mpeg", resumable=False)
-            file_meta = {"name": filename, "parents": [fid]}
-            service.files().create(body=file_meta, media_body=media).execute()
-            logger.info("Uploaded %s to Drive folder %s", filename, fid)
-        except Exception as e:
-            logger.exception("Drive upload failed: %s", e)
-            return web.Response(status=500)
+        # Handle audio file if present
+        if audio_url:
+            logger.info("Uploading audio %s to folder %s", audio_url, fid)
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(audio_url) as resp:
+                        if resp.status != 200:
+                            raise RuntimeError(f"audio download failed {resp.status}")
+                        audio_bytes = await resp.read()
+                        filename = audio_url.split("/")[-1].split("?", 1)[0] or "recording.mp3"
+                media = MediaInMemoryUpload(audio_bytes, mimetype="audio/mpeg", resumable=False)
+                service.files().create(body={"name": filename, "parents": [fid]}, media_body=media).execute()
+                logger.info("Uploaded %s to Drive folder %s", filename, fid)
+            except Exception as e:
+                logger.exception("Failed to handle audio: %s", e)
+
+        # Handle transcript if present
+        if transcript:
+            try:
+                convo_id = inner.get("conversation_id", "conversation")
+                lines = [f"{item.get('role','').upper()}: {item.get('message','')}" for item in transcript]
+                text_content = "\n".join(lines)
+                transcript_filename = f"{convo_id}_transcript.txt"
+                media_txt = MediaInMemoryUpload(text_content.encode("utf-8"), mimetype="text/plain", resumable=False)
+                service.files().create(body={"name": transcript_filename, "parents": [fid]}, media_body=media_txt).execute()
+                logger.info("Uploaded transcript to Drive folder %s as %s", fid, transcript_filename)
+            except Exception as e:
+                logger.exception("Failed to upload transcript: %s", e)
 
         return web.Response(status=200)
 
