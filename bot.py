@@ -254,9 +254,15 @@ async def elevenlabs_webhook(request: web.Request):
         data = await request.json()
         logger.info("Webhook received payload: %s", json.dumps(data, indent=2))
         
-        # Extract audio URL and folder ID
-        audio_url = data.get("audio_url")
-        fid = data.get("fid")  # This should come from dynamic variables
+        # Extract audio URL and folder ID (payload structure: payload['data'])
+        inner = data.get("data", {})
+        audio_url = inner.get("recording_url") or inner.get("audio_url")
+
+        # fid can be in conversation_initiation_client_data or in dynamic_variables
+        cicd = inner.get("conversation_initiation_client_data", {})
+        fid = cicd.get("fid") or cicd.get("folder_id")
+        if not fid:
+            fid = inner.get("dynamic_variables", {}).get("fid")
         
         if not audio_url:
             logger.warning("No audio_url in webhook payload")
