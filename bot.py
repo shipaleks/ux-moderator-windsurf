@@ -236,8 +236,22 @@ def main() -> None:
 
     application.add_handler(conv_handler)
 
-    logger.info("Bot started…")
-    application.run_polling()
+    # Determine run mode
+    use_webhook = os.getenv("USE_WEBHOOK", "false").lower() == "true"
+    if use_webhook:
+        base_url = os.environ["APP_BASE_URL"].rstrip("/")  # e.g. https://my-app.up.railway.app
+        port = int(os.getenv("PORT", "8080"))
+        path = f"/{TELEGRAM_TOKEN}"
+        logger.info("Starting bot in WEBHOOK mode on port %s", port)
+        application.run_webhook(
+            listen="0.0.0.0",
+            port=port,
+            url_path=TELEGRAM_TOKEN,
+            webhook_url=f"{base_url}{path}",
+        )
+    else:
+        logger.info("Starting bot in POLLING mode…")
+        application.run_polling()
 
 if __name__ == "__main__":
     main()
