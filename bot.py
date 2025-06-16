@@ -8,13 +8,17 @@ import os
 from datetime import datetime
 from typing import Dict, Any
 from urllib.parse import quote
-import hmac, hashlib, json, io
+import hmac
+import hashlib
+import json
+import tempfile
+from aiohttp import web
+from googleapiclient.http import MediaInMemoryUpload
 
 import aiohttp
 from dotenv import load_dotenv
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
-from googleapiclient.http import MediaIoBaseUpload
 from telegram import Update, ReplyKeyboardRemove
 from telegram.ext import (
     Application,
@@ -114,7 +118,7 @@ def build_interview_link(dynamic_vars):
         "interview_goals": dynamic_vars.get("interview_goals", ""), 
         "interview_duration": str(dynamic_vars.get("interview_duration", "20")),
         "additional_instructions": dynamic_vars.get("additional_instructions", ""),
-        "drive_folder_id": dynamic_vars.get("drive_folder_id", "")
+        "fid": dynamic_vars.get("fid", "")
     }
     
     # URL encode parameters
@@ -160,7 +164,6 @@ async def extra_instructions(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 async def duration(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user_data = user_answers.get(update.effective_user.id, {})
-    
     user_data["interview_duration"] = update.message.text.strip()
 
     await update.message.reply_text("⏳ Создаю агента и папку, подождите пару секунд…", reply_markup=ReplyKeyboardRemove())
@@ -168,7 +171,8 @@ async def duration(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     # 1. Create Drive folder
     try:
         folder_info = await asyncio.to_thread(create_drive_folder, user_data["interview_topic"])
-        user_data["drive_folder_id"] = folder_info["id"]
+        # Save folder id for later link building
+        user_data["fid"] = folder_info["id"]
     except Exception as e:
         logger.exception("Drive error")
         await update.message.reply_text(f"Ошибка создания папки на Google Drive: {e}")
@@ -194,56 +198,6 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user_answers.pop(update.effective_user.id, None)
     await update.message.reply_text("Диалог отменён.", reply_markup=ReplyKeyboardRemove())
     return ConversationHandler.END
-
-# ---------------------------------------------------------------------------
-# ElevenLabs webhook handling
-# ---------------------------------------------------------------------------
-ELEVEN_WEBHOOK_SECRET = os.getenv("ELEVEN_WEBHOOK_SECRET", "")
-
-async def download_and_upload(conv_id: str, folder_id: str):
-    headers = {"xi-api-key": ELEVENLABS_API_KEY}
-    url = f"https://api.elevenlabs.io/v1/convai/conversations/{conv_id}"
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url, headers=headers) as resp:
-            if resp.status != 200:
-                logger.error("Failed to fetch conversation %s: %s", conv_id, resp.status)
-                return
-            data = await resp.json()
-    audio_urls = [m.get("audio_url") for m in data.get("messages", []) if m.get("audio_url")]
-    if not audio_urls:
-        logger.warning("No audio urls in conversation %s", conv_id)
-        return
-    service = _drive_service()
-    for au in audio_urls:
-        async with aiohttp.ClientSession() as s:
-            async with s.get(au) as r:
-                if r.status != 200:
-                    logger.warning("Failed download %s", au)
-                    continue
-                content = await r.read()
-        filename = au.split("/")[-1]
-        media = MediaIoBaseUpload(io.BytesIO(content), mimetype="audio/mpeg")
-        service.files().create(media_body=media, body={"name": filename, "parents": [folder_id]}).execute()
-    logger.info("Uploaded %s files from conv %s to folder %s", len(audio_urls), conv_id, folder_id)
-
-async def eleven_webhook(request):
-    raw = await request.read()
-    if ELEVEN_WEBHOOK_SECRET:
-        sig = request.headers.get("x-elevenlabs-signature", "")
-        expected = hmac.new(ELEVEN_WEBHOOK_SECRET.encode(), raw, hashlib.sha256).hexdigest()
-        if not hmac.compare_digest(sig, expected):
-            return aiohttp.web.Response(status=401)
-    data = json.loads(raw.decode())
-    if data.get("event") != "conversation_finished":
-        return aiohttp.web.Response(status=200)
-    conv_id = data.get("conversation_id")
-    dyn_vars = data.get("metadata", {}).get("dynamic_variables", {})
-    folder_id = dyn_vars.get("drive_folder_id")
-    if not folder_id:
-        logger.error("drive_folder_id missing in webhook for conv %s", conv_id)
-        return aiohttp.web.Response(status=200)
-    asyncio.create_task(download_and_upload(conv_id, folder_id))
-    return aiohttp.web.Response(status=200)
 
 # ---------------------------------------------------------------------------
 # Main entry
@@ -272,21 +226,79 @@ def main() -> None:
         port = int(os.getenv("PORT", "8080"))
         path = f"/{TELEGRAM_TOKEN}"
         logger.info("Starting bot in WEBHOOK mode on port %s", port)
-                # Build aiohttp app with custom ElevenLabs endpoint
-        def add_routes(app):
-            app.router.add_post('/eleven-webhook', eleven_webhook)
-
-
         application.run_webhook(
             listen="0.0.0.0",
             port=port,
             url_path=TELEGRAM_TOKEN,
             webhook_url=f"{base_url}{path}",
-            bootstrap_app=add_routes,
         )
     else:
         logger.info("Starting bot in POLLING mode…")
+        port = int(os.getenv("PORT", "8080"))
+        asyncio.get_event_loop().create_task(start_webhook_server(port))
         application.run_polling()
+
+# ---------------------------------------------------------------------------
+# ElevenLabs post-call webhook handling
+# ---------------------------------------------------------------------------
+
+ELEVEN_WEBHOOK_SECRET = os.getenv("ELEVEN_WEBHOOK_SECRET")
+
+async def elevenlabs_webhook(request: web.Request):
+    raw = await request.read()
+    if ELEVEN_WEBHOOK_SECRET:
+        sig = request.headers.get("X-Elevenlabs-Signature")
+        computed = hmac.new(ELEVEN_WEBHOOK_SECRET.encode(), raw, hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(sig or "", computed):
+            logger.warning("Invalid webhook signature")
+            return web.Response(status=401)
+    try:
+        data = json.loads(raw.decode())
+    except Exception as e:
+        logger.error("Bad JSON in webhook: %s", e)
+        return web.Response(status=400)
+
+    audio_url = data.get("audio_url") or data.get("recording_url")
+    dyn = data.get("dynamic_variables", {}) or {}
+    folder_id = dyn.get("fid") or dyn.get("folder_id")
+    if not audio_url or not folder_id:
+        logger.error("Webhook missing audio_url or folder_id: %s", data)
+        return web.Response(status=400)
+    logger.info("Webhook received: audio=%s folder=%s", audio_url, folder_id)
+
+    # Download audio
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(audio_url) as resp:
+                if resp.status != 200:
+                    raise RuntimeError(f"audio download failed {resp.status}")
+                audio_bytes = await resp.read()
+                filename = audio_url.split("/")[-1].split("?")[0] or f"recording.mp3"
+    except Exception as e:
+        logger.exception("Failed to download audio: %s", e)
+        return web.Response(status=500)
+
+    # Upload to Drive
+    try:
+        service = _drive_service()
+        media = MediaInMemoryUpload(audio_bytes, mimetype="audio/mpeg", resumable=False)
+        file_meta = {"name": filename, "parents": [folder_id]}
+        service.files().create(body=file_meta, media_body=media).execute()
+        logger.info("Uploaded %s to Drive folder %s", filename, folder_id)
+    except Exception as e:
+        logger.exception("Drive upload failed: %s", e)
+        return web.Response(status=500)
+
+    return web.Response(status=200)
+
+async def start_webhook_server(port: int):
+    app = web.Application()
+    app.router.add_post("/elevenlabs/webhook", elevenlabs_webhook)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+    logger.info("ElevenLabs webhook server started on port %s", port)
 
 if __name__ == "__main__":
     main()
