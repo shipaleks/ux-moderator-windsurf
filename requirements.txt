@@ -3,3 +3,4 @@ elevenlabs==1.0.3
 google-api-python-client==2.126.0
 google-auth==2.29.0
 python-dotenv==1.0.1
+aiohttp==3.9.5
