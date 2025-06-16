@@ -219,28 +219,11 @@ def main() -> None:
 
     application.add_handler(conv_handler)
 
-    # Determine run mode
-    use_webhook = os.getenv("USE_WEBHOOK", "false").lower() == "true"
-    if use_webhook:
-        base_url = os.environ["APP_BASE_URL"].rstrip("/")  # e.g. https://my-app.up.railway.app
-        port = int(os.getenv("PORT", "8080"))
-        path = f"/{TELEGRAM_TOKEN}"
-        logger.info("Starting bot + ElevenLabs endpoint in WEBHOOK mode on port %s", port)
-        # create aiohttp app with additional route for ElevenLabs callbacks
-        extra_app = web.Application()
-        extra_app.router.add_post("/elevenlabs/webhook", elevenlabs_webhook)
-        application.run_webhook(
-            listen="0.0.0.0",
-            port=port,
-            url_path=TELEGRAM_TOKEN,
-            webhook_url=f"{base_url}{path}",
-            web_app=extra_app,
-        )
-    else:
-        logger.info("Starting bot in POLLING mode…")
-        port = int(os.getenv("PORT", "8080"))
-        asyncio.get_event_loop().create_task(start_webhook_server(port))
-        application.run_polling()
+        # Always run in polling mode (simpler, allows custom aiohttp routes)
+    logger.info("Starting bot in POLLING mode…")
+    port = int(os.getenv("PORT", "8080"))
+    asyncio.get_event_loop().create_task(start_webhook_server(port))
+    application.run_polling()
 
 # ---------------------------------------------------------------------------
 # ElevenLabs post-call webhook handling
