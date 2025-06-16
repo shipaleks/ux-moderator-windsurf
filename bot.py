@@ -275,7 +275,7 @@ def main() -> None:
                 # Build aiohttp app with custom ElevenLabs endpoint
         import aiohttp.web
         web_app = aiohttp.web.Application()
-        web_app.add_post('/eleven-webhook', eleven_webhook)
+        web_app.add_routes([aiohttp.web.post('/eleven-webhook', eleven_webhook)])
 
         application.run_webhook(
             listen="0.0.0.0",
