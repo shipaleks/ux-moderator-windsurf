@@ -74,21 +74,22 @@ def _drive_service():
     creds = Credentials.from_service_account_file(GOOGLE_SERVICE_ACCOUNT_JSON, scopes=_SCOPES)
     return build("drive", "v3", credentials=creds)
 
-async def create_drive_folder(topic: str) -> Dict[str, str]:
-    """Create a folder for the user, return {id, link}."""
+def create_drive_folder(topic: str) -> Dict[str, str]:
+    """Create a folder for the user, return {id, link}. Synchronous helper for to_thread."""
     service = _drive_service()
     metadata = {
         "name": f"UX-Interview-{topic}-{datetime.utcnow().strftime('%Y%m%dT%H%M%S')}",
         "mimeType": "application/vnd.google-apps.folder",
         "parents": [GOOGLE_DRIVE_PARENT_FOLDER_ID],
     }
-    folder = service.files().create(body=metadata, fields="id, webViewLink, webContentLink").execute()
+    folder = (
+        service.files()
+        .create(body=metadata, fields="id, webViewLink, webContentLink")
+        .execute()
+    )
 
     # Make anyone-w-link viewer (simple)
-    permission_body = {
-        "type": "anyone",
-        "role": "reader",
-    }
+    permission_body = {"type": "anyone", "role": "reader"}
     service.permissions().create(fileId=folder["id"], body=permission_body).execute()
 
     return {"id": folder["id"], "link": folder.get("webViewLink")}
@@ -96,30 +97,57 @@ async def create_drive_folder(topic: str) -> Dict[str, str]:
 # ---------------------------------------------------------------------------
 # ElevenLabs helpers
 # ---------------------------------------------------------------------------
-ELEVEN_API_BASE = "https://api.elevenlabs.io/v1"
+ELEVEN_API_BASE = "https://api.elevenlabs.io/v1/convai"
 
 async def clone_agent(variables: Dict[str, Any]) -> Dict[str, str]:
     """Clone base agent and return {agent_id, share_url}."""
-    url = f"{ELEVEN_API_BASE}/agents/{ELEVENLABS_BASE_AGENT_ID}/clone"
     headers = {
         "xi-api-key": ELEVENLABS_API_KEY,
         "Content-Type": "application/json",
     }
-    name = f"UX Interviewer - {variables['interview_topic']} - {datetime.utcnow().strftime('%Y%m%dT%H%M%S')}"
+    name = (
+        f"UX Interviewer - {variables['interview_topic']} - "
+        f"{datetime.utcnow().strftime('%Y%m%dT%H%M%S')}"
+    )
+    clone_url = f"{ELEVEN_API_BASE}/agents/{ELEVENLABS_BASE_AGENT_ID}/clone"
     payload = {
         "name": name,
-        "description": variables.get("interview_goal", ""),
+        "description": variables.get("interview_goals", ""),
+        # additional fields if needed
     }
     async with aiohttp.ClientSession() as session:
-        async with session.post(url, headers=headers, json=payload) as resp:
+        async with session.post(clone_url, headers=headers, json=payload) as resp:
             if resp.status != 200:
                 text = await resp.text()
-                raise RuntimeError(f"Failed to clone agent: {resp.status} {text}")
+                raise RuntimeError(
+                    f"Failed to clone agent: {resp.status} {text}"
+                )
             data = await resp.json()
-    return {
-        "agent_id": data["agent_id"],
-        "share_url": data.get("share_link", {}).get("url", ""),
-    }
+        agent_id = data.get("agent_id") or data.get("id")
+        if not agent_id:
+            raise RuntimeError("clone response missing agent_id")
+
+        # Retrieve (or create) share link
+        link_url = f"{ELEVEN_API_BASE}/agents/{agent_id}/link"
+        async with session.get(link_url, headers=headers) as resp_link:
+            if resp_link.status == 404:
+                # maybe need to create link first
+                create_link_url = f"{ELEVEN_API_BASE}/agents/{agent_id}/link"
+                async with session.post(create_link_url, headers=headers) as resp_create:
+                    if resp_create.status not in (200, 201):
+                        raise RuntimeError(
+                            f"Failed to create share link: {resp_create.status} "
+                            f"{await resp_create.text()}"
+                        )
+                    link_data = await resp_create.json()
+            elif resp_link.status in (200, 201):
+                link_data = await resp_link.json()
+            else:
+                raise RuntimeError(
+                    f"Failed to fetch share link: {resp_link.status} {await resp_link.text()}"
+                )
+
+    return {"agent_id": agent_id, "share_url": link_data.get("url", "")}
 
 # ---------------------------------------------------------------------------
 # Telegram conversation states
