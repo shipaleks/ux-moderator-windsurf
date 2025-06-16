@@ -230,6 +230,17 @@ async def clone_agent(variables: Dict[str, Any]) -> Dict[str, str]:
     if not share_url:
         logger.error("Could not determine share URL from link_data: %s", link_data)
 
+    # Try signed URL API again now that overrides are enabled
+    signed_url = f"{ELEVEN_API_BASE}/agents/{agent_id}/signed-url"
+    async with session.post(signed_url, headers=headers, json={"overrides": {"variables": dynamic_vars}}) as resp_signed:
+        if resp_signed.status in (200, 201):
+            signed_data = await resp_signed.json()
+            logger.debug("ElevenLabs signed URL response: %s", signed_data)
+            signed_url = signed_data.get("url")
+            if signed_url:
+                logger.info("Using signed URL with overrides: %s", signed_url)
+                return {"agent_id": agent_id, "share_url": signed_url}
+
     # 2) since variables are now embedded in agent, use the simple share_url
     logger.info("Variables embedded in agent config, using public share URL: %s", share_url)
 
