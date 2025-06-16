@@ -111,18 +111,15 @@ async def clone_agent(variables: Dict[str, Any]) -> Dict[str, str]:
         f"{datetime.utcnow().strftime('%Y%m%dT%H%M%S')}"
     )
 
-    # 1) create new agent based on base one
-    create_url = f"{ELEVEN_API_BASE}/agents/create"
-    # fetch base agent details to copy conversation_config
+    # 1) get base agent conversation config to copy
+    get_url = f"{ELEVEN_API_BASE}/agents/{ELEVENLABS_BASE_AGENT_ID}"
     async with aiohttp.ClientSession() as session:
-        async with session.get(f"{ELEVEN_API_BASE}/agents/{ELEVENLABS_BASE_AGENT_ID}", headers=headers) as base_resp:
-            if base_resp.status != 200:
-                raise RuntimeError(
-                    f"Failed to fetch base agent: {base_resp.status} {await base_resp.text()}"
-                )
-            base_agent_data = await base_resp.json()
+        async with session.get(get_url, headers=headers) as resp:
+            if resp.status != 200:
+                raise RuntimeError(f"Failed to get base agent: {resp.status} {await resp.text()}")
+            base_agent_data = await resp.json()
             base_conv_config = base_agent_data.get("conversation_config", {})
-    
+
     # map keys to agent variable names
     dynamic_vars = {
         "interview_topic": variables.get("interview_topic"),
@@ -131,11 +128,42 @@ async def clone_agent(variables: Dict[str, Any]) -> Dict[str, str]:
         "additional_instructions": variables.get("additional_instructions"),
     }
 
+    # 1.5) inject variables directly into system prompt instead of using dynamic variables
+    modified_config = base_conv_config.copy()
+    if "system_prompt" in modified_config:
+        original_prompt = modified_config["system_prompt"]
+        # Replace placeholders with actual values
+        modified_config["system_prompt"] = original_prompt.replace(
+            "{{interview_topic}}", dynamic_vars.get("interview_topic", "[тема не указана]")
+        ).replace(
+            "{{interview_goals}}", dynamic_vars.get("interview_goals", "[цели не указаны]")
+        ).replace(
+            "{{interview_duration}}", str(dynamic_vars.get("interview_duration", "20"))
+        ).replace(
+            "{{additional_instructions}}", dynamic_vars.get("additional_instructions", "")
+        )
+        
+    # Also replace in first_message if it exists
+    if "first_message" in modified_config:
+        original_first = modified_config["first_message"]
+        modified_config["first_message"] = original_first.replace(
+            "{{interview_topic}}", dynamic_vars.get("interview_topic", "[тема не указана]")
+        ).replace(
+            "{{interview_goals}}", dynamic_vars.get("interview_goals", "[цели не указаны]")
+        ).replace(
+            "{{interview_duration}}", str(dynamic_vars.get("interview_duration", "20"))
+        ).replace(
+            "{{additional_instructions}}", dynamic_vars.get("additional_instructions", "")
+        )
+
+    # 1.6) create new agent by cloning with modified config
+    name = f"UX-Интервьюер-{dynamic_vars.get('interview_topic', 'Topic')[:20]}"
+    create_url = f"{ELEVEN_API_BASE}/agents/create"
     payload = {
         "from_agent_id": ELEVENLABS_BASE_AGENT_ID,
         "name": name,
         "description": dynamic_vars.get("interview_goals", ""),
-        "conversation_config": {**base_conv_config, "dynamic_variables": {k: v for k, v in dynamic_vars.items() if v}},
+        "conversation_config": modified_config,
     }
     async with aiohttp.ClientSession() as session:
         async with session.post(create_url, headers=headers, json=payload) as resp:
@@ -191,29 +219,8 @@ async def clone_agent(variables: Dict[str, Any]) -> Dict[str, str]:
     if not share_url:
         logger.error("Could not determine share URL from link_data: %s", link_data)
 
-    # 2) get signed URL injecting dynamic variables
-    signed_payload = {
-        "agent_id": agent_id,
-        "expires_in_seconds": 900,
-        "conversation_config": {
-            "dynamic_variables": {k: v for k, v in dynamic_vars.items() if v}
-        },
-    }
-    # Correct endpoint: POST /conversation/get-signed-url with JSON body (allows dynamic_variables)
-    signed_url_endpoint = f"{ELEVEN_API_BASE}/conversation/get-signed-url"
-    logger.debug("Signed URL payload: %s", signed_payload)
-    async with aiohttp.ClientSession() as session:
-        async with session.post(signed_url_endpoint, headers=headers, json=signed_payload) as signed_resp:
-            if signed_resp.status in (404, 405):
-                logger.warning("get-signed-url unavailable (%s): %s", signed_resp.status, await signed_resp.text())
-                return {"agent_id": agent_id, "share_url": share_url}
-            if signed_resp.status not in (200, 201):
-                raise RuntimeError(
-                    f"Failed to get signed URL: {signed_resp.status} {await signed_resp.text()}"
-                )
-            signed_data = await signed_resp.json()
-            logger.debug("Signed URL response: %s", signed_data)
-            share_url = signed_data.get("url") or share_url  # fallback to previous
+    # 2) since variables are now embedded in agent, use the simple share_url
+    logger.info("Variables embedded in agent config, using public share URL: %s", share_url)
 
     return {"agent_id": agent_id, "share_url": share_url}
 
