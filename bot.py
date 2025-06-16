@@ -272,11 +272,17 @@ def main() -> None:
         port = int(os.getenv("PORT", "8080"))
         path = f"/{TELEGRAM_TOKEN}"
         logger.info("Starting bot in WEBHOOK mode on port %s", port)
+                # Build aiohttp app with custom ElevenLabs endpoint
+        import aiohttp.web
+        web_app = aiohttp.web.Application()
+        web_app.add_post('/eleven-webhook', eleven_webhook)
+
         application.run_webhook(
             listen="0.0.0.0",
             port=port,
             url_path=TELEGRAM_TOKEN,
             webhook_url=f"{base_url}{path}",
+            web_app=web_app,
         )
     else:
         logger.info("Starting bot in POLLING mode…")
