@@ -195,26 +195,17 @@ async def clone_agent(variables: Dict[str, Any]) -> Dict[str, str]:
     signed_payload = {
         "agent_id": agent_id,
         "expires_in_seconds": 900,
-        "conversation_config_override": {
+        "conversation_config": {
             "dynamic_variables": {k: v for k, v in dynamic_vars.items() if v}
         },
     }
     # Correct endpoint: POST /conversation/get-signed-url with JSON body (allows dynamic_variables)
-    import urllib.parse, json as _json
-    query = {
-        "agent_id": agent_id,
-        "expires_in_seconds": 900,
-        # keep override optional; it's accepted for GET as JSON string
-        "conversation_config_override": _json.dumps({
-            "dynamic_variables": {k: v for k, v in dynamic_vars.items() if v}
-        }),
-    }
-    signed_url_endpoint = f"{ELEVEN_API_BASE}/conversations/get-signed-url?" + urllib.parse.urlencode(query)
+    signed_url_endpoint = f"{ELEVEN_API_BASE}/conversation/get-signed-url"
+    logger.debug("Signed URL payload: %s", signed_payload)
     async with aiohttp.ClientSession() as session:
-        async with session.get(signed_url_endpoint, headers=headers) as signed_resp:
-            if signed_resp.status in (405, 404):
-                # Endpoint/method mismatch – fall back to previous share_url
-                logger.warning("Signed URL not available (%s); using plain share URL", signed_resp.status)
+        async with session.post(signed_url_endpoint, headers=headers, json=signed_payload) as signed_resp:
+            if signed_resp.status in (404, 405):
+                logger.warning("get-signed-url unavailable (%s): %s", signed_resp.status, await signed_resp.text())
                 return {"agent_id": agent_id, "share_url": share_url}
             if signed_resp.status not in (200, 201):
                 raise RuntimeError(
