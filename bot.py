@@ -126,6 +126,7 @@ async def clone_agent(variables: Dict[str, Any]) -> Dict[str, str]:
                     f"Failed to create agent: {resp.status} {await resp.text()}"
                 )
             data = await resp.json()
+        logger.debug("ElevenLabs create response: %s", data)
         agent_id = data.get("agent_id") or data.get("id")
         if not agent_id:
             raise RuntimeError("create response missing agent_id")
@@ -141,14 +142,23 @@ async def clone_agent(variables: Dict[str, Any]) -> Dict[str, str]:
                             f"{await resp_create.text()}"
                         )
                     link_data = await resp_create.json()
+                    logger.debug("ElevenLabs link create response: %s", link_data)
             elif resp_link.status in (200, 201):
                 link_data = await resp_link.json()
+                logger.debug("ElevenLabs link get response: %s", link_data)
             else:
                 raise RuntimeError(
                     f"Failed to fetch share link: {resp_link.status} {await resp_link.text()}"
                 )
 
-    return {"agent_id": agent_id, "share_url": link_data.get("url", "")}
+    share_url = (
+        link_data.get("url")
+        or link_data.get("share_link", {}).get("url")
+        or link_data.get("web_url")
+    )
+    if not share_url:
+        logger.error("Unexpected link_data format: %s", link_data)
+    return {"agent_id": agent_id, "share_url": share_url}
 
 # ---------------------------------------------------------------------------
 # Telegram conversation states
