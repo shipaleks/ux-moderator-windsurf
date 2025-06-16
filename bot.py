@@ -116,6 +116,8 @@ async def clone_agent(variables: Dict[str, Any]) -> Dict[str, str]:
         "from_agent_id": ELEVENLABS_BASE_AGENT_ID,
         "name": name,
         "description": variables.get("interview_goals", ""),
+        # minimal required config; can be extended with dynamic vars later
+        "conversation_config": {},
     }
     async with aiohttp.ClientSession() as session:
         async with session.post(create_url, headers=headers, json=payload) as resp:
