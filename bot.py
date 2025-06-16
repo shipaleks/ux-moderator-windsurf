@@ -156,8 +156,19 @@ async def clone_agent(variables: Dict[str, Any]) -> Dict[str, str]:
         or link_data.get("share_link", {}).get("url")
         or link_data.get("web_url")
     )
+
+    # If API returned token instead of URL, build signed or public link
     if not share_url:
-        logger.error("Unexpected link_data format: %s", link_data)
+        token_val = link_data.get("token")
+        if token_val:
+            # signed link with token
+            share_url = f"https://elevenlabs.io/convai/agent/{agent_id}?token={token_val}" if isinstance(token_val, str) else None
+        # final fallback – public page pattern
+        if not share_url:
+            share_url = f"https://elevenlabs.io/convai/agent/{agent_id}"
+    if not share_url:
+        logger.error("Could not determine share URL from link_data: %s", link_data)
+
     return {"agent_id": agent_id, "share_url": share_url}
 
 # ---------------------------------------------------------------------------
