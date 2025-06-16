@@ -10,6 +10,7 @@ from typing import Dict, Any
 from urllib.parse import quote
 import hmac
 import hashlib
+import math
 import json
 import tempfile
 from aiohttp import web
@@ -299,14 +300,28 @@ async def elevenlabs_webhook(request: web.Request):
         if transcript:
             try:
                 convo_id = inner.get("conversation_id", "conversation")
-                lines = [f"{item.get('role','').upper()}: {item.get('message','')}" for item in transcript]
-                text_content = "\n".join(lines)
-                transcript_filename = f"{convo_id}_transcript.txt"
+                # plain txt
+                lines_txt = [f"{item.get('role','').upper()}: {item.get('message','')}" for item in transcript]
+                text_content = "\n".join(lines_txt)
                 media_txt = MediaInMemoryUpload(text_content.encode("utf-8"), mimetype="text/plain", resumable=False)
-                service.files().create(body={"name": transcript_filename, "parents": [fid]}, media_body=media_txt).execute()
-                logger.info("Uploaded transcript to Drive folder %s as %s", fid, transcript_filename)
+                service.files().create(body={"name": f"{convo_id}_transcript.txt", "parents": [fid]}, media_body=media_txt).execute()
+                # VTT
+                def secs_to_ts(s: float):
+                    h = int(s//3600); m = int((s%3600)//60); sec = s%60
+                    return f"{h:02}:{m:02}:{sec:06.3f}".replace('.',',')
+                cues = []
+                for idx, item in enumerate(sorted(transcript, key=lambda x: x.get('time_in_call_secs', 0))):
+                    start = item.get('time_in_call_secs', 0)
+                    end = transcript[idx+1].get('time_in_call_secs', start+2) if idx+1 < len(transcript) else start+2
+                    cues.append(f"{idx+1}\n{secs_to_ts(start)} --> {secs_to_ts(end)}\n{item.get('role','')}: {item.get('message','')}\n")
+                vtt_content = "WEBVTT\n\n" + "\n".join(cues)
+                media_vtt = MediaInMemoryUpload(vtt_content.encode('utf-8'), mimetype="text/vtt", resumable=False)
+                service.files().create(body={"name": f"{convo_id}.vtt", "parents": [fid]}, media_body=media_vtt).execute()
+                logger.info("Uploaded transcript TXT and VTT for %s", convo_id)
+                # trigger audio fetch in background
+                asyncio.create_task(fetch_and_upload_audio(convo_id))
             except Exception as e:
-                logger.exception("Failed to upload transcript: %s", e)
+                logger.exception("Failed to upload transcript/VTT: %s", e)
 
         return web.Response(status=200)
 
