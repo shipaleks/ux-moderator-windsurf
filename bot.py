@@ -231,9 +231,10 @@ async def clone_agent(variables: Dict[str, Any]) -> Dict[str, str]:
         logger.error("Could not determine share URL from link_data: %s", link_data)
 
     # Try signed URL API again now that overrides are enabled
-    signed_url = f"{ELEVEN_API_BASE}/agents/{agent_id}/signed-url"
+    signed_url = f"{ELEVEN_API_BASE}/conversation/get-signed-url"
+    params = {"overrides": {"variables": dynamic_vars}, "agent_id": agent_id}
     async with aiohttp.ClientSession() as signed_session:
-        async with signed_session.post(signed_url, headers=headers, json={"overrides": {"variables": dynamic_vars}}) as resp_signed:
+        async with signed_session.get(signed_url, headers=headers, params=params) as resp_signed:
             if resp_signed.status in (200, 201):
                 signed_data = await resp_signed.json()
                 logger.debug("ElevenLabs signed URL response: %s", signed_data)
