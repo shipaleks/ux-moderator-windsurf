@@ -225,12 +225,16 @@ def main() -> None:
         base_url = os.environ["APP_BASE_URL"].rstrip("/")  # e.g. https://my-app.up.railway.app
         port = int(os.getenv("PORT", "8080"))
         path = f"/{TELEGRAM_TOKEN}"
-        logger.info("Starting bot in WEBHOOK mode on port %s", port)
+        logger.info("Starting bot + ElevenLabs endpoint in WEBHOOK mode on port %s", port)
+        # create aiohttp app with additional route for ElevenLabs callbacks
+        extra_app = web.Application()
+        extra_app.router.add_post("/elevenlabs/webhook", elevenlabs_webhook)
         application.run_webhook(
             listen="0.0.0.0",
             port=port,
             url_path=TELEGRAM_TOKEN,
             webhook_url=f"{base_url}{path}",
+            web_app=extra_app,
         )
     else:
         logger.info("Starting bot in POLLING mode…")
