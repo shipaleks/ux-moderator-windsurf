@@ -111,7 +111,7 @@ async def clone_agent(variables: Dict[str, Any]) -> Dict[str, str]:
     )
 
     # 1) create new agent based on base one
-    create_url = f"{ELEVEN_API_BASE}/agents"
+    create_url = f"{ELEVEN_API_BASE}/agents/create"
     payload = {
         "from_agent_id": ELEVENLABS_BASE_AGENT_ID,
         "name": name,
