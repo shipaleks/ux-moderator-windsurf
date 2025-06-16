@@ -223,7 +223,7 @@ async def clone_agent(variables: Dict[str, Any]) -> Dict[str, str]:
 # ---------------------------------------------------------------------------
 # Telegram conversation states
 # ---------------------------------------------------------------------------
-TOPIC, GOAL, DURATION = range(3)
+TOPIC, GOAL, EXTRA, DURATION = range(4)
 
 # Temporary storage for user answers in-memory (user_id -> dict)
 user_answers: Dict[int, Dict[str, str]] = {}
@@ -234,19 +234,27 @@ user_answers: Dict[int, Dict[str, str]] = {}
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.message.reply_text(
         "Привет! Я помогу создать UX-интервьюера. Давай начнём.\n\n"
-        "1/3 \U0001F4D6   Введите тему интервью (например: мобильное банк приложение)"
+        "1/4 📚  Введите тему исследования (например: мобильное банковское приложение)"
     )
     user_answers[update.effective_user.id] = {}
     return TOPIC
 
 async def topic(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user_answers[update.effective_user.id]["interview_topic"] = update.message.text.strip()
-    await update.message.reply_text("2/3 \🎯   Какова цель интервью? (одна строка)")
+    await update.message.reply_text("2/4 🎯  Какова цель исследования? (например: повысить конверсию онбординга)")
     return GOAL
 
 async def goal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user_answers[update.effective_user.id]["interview_goal"] = update.message.text.strip()
-    await update.message.reply_text("3/3 ⏱️   Планируемая длительность в минутах?")
+    await update.message.reply_text("3/4 📝  Дополнительные инструкции для агента (если нет, введите -).\nНапример: обращаться на «ты», избегать технического жаргона")
+    return EXTRA
+
+async def extra_instructions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    text = update.message.text.strip()
+    if text == "-":
+        text = ""
+    user_answers[update.effective_user.id]["additional_instructions"] = text
+    await update.message.reply_text("4/4 ⏱️  Планируемая длительность интервью в минутах? (например: 20)")
     return DURATION
 
 async def duration(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -274,9 +282,9 @@ async def duration(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     # 3. Reply with links
     reply = (
         "Готово! \U0001F389\n\n"
-        f"• Ссылка на агента: {agent_info['share_url']}\n"
+        f"• Ссылка на агента (действительна 15 мин): {agent_info['share_url']}\n"
         f"• Папка Google Drive: {folder_info['link']}\n\n"
-        "Передайте ссылку на агента своим респондентам. Аудиозаписи будут сохраняться в указанную папку. Удачи!"
+        "Передайте ссылку респондентам сразу после генерации. \nПосле истечения 15 минут создайте новую командой /start.\nАудиозаписи будут сохраняться в указанную папку. Удачи!"
     )
     await update.message.reply_text(reply)
 
@@ -301,6 +309,7 @@ def main() -> None:
         states={
             TOPIC: [MessageHandler(filters.TEXT & ~filters.COMMAND, topic)],
             GOAL: [MessageHandler(filters.TEXT & ~filters.COMMAND, goal)],
+            EXTRA: [MessageHandler(filters.TEXT & ~filters.COMMAND, extra_instructions)],
             DURATION: [MessageHandler(filters.TEXT & ~filters.COMMAND, duration)],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
