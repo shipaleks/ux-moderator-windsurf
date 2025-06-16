@@ -281,6 +281,12 @@ async def elevenlabs_webhook(request: web.Request):
 async def start_webhook_server(port: int):
     app = web.Application()
     app.router.add_post("/elevenlabs/webhook", elevenlabs_webhook)
+    # Add health check endpoint
+    async def health_check(request):
+        return web.Response(text="OK", status=200)
+    app.router.add_get("/health", health_check)
+    app.router.add_get("/", health_check)
+    
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", port)
