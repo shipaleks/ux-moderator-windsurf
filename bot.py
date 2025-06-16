@@ -162,10 +162,14 @@ async def clone_agent(variables: Dict[str, Any]) -> Dict[str, str]:
         token_val = link_data.get("token")
         if token_val:
             # signed link with token
-            share_url = f"https://elevenlabs.io/convai/agent/{agent_id}?token={token_val}" if isinstance(token_val, str) else None
+            share_url = (
+                f"https://elevenlabs.io/app/talk-to?agent_id={agent_id}&token={token_val}"
+                if isinstance(token_val, str)
+                else None
+            )
         # final fallback – public page pattern
         if not share_url:
-            share_url = f"https://elevenlabs.io/convai/agent/{agent_id}"
+            share_url = f"https://elevenlabs.io/app/talk-to?agent_id={agent_id}"
     if not share_url:
         logger.error("Could not determine share URL from link_data: %s", link_data)
 
