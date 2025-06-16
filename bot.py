@@ -309,8 +309,20 @@ async def elevenlabs_webhook(request: web.Request):
         #         logger.warning("Invalid webhook signature")
         #         return web.Response(text="Invalid signature", status=401)
 
+        # HMAC signature validation (enabled if EL_WEBHOOK_SECRET env var is set)
+        body = await request.read()
+        webhook_secret = os.getenv("EL_WEBHOOK_SECRET")
+        if webhook_secret:
+            signature = request.headers.get("X-Elevenlabs-Signature")
+            if not signature:
+                logger.warning("Missing webhook signature")
+                return web.Response(text="Missing signature", status=401)
+            expected_signature = hmac.new(webhook_secret.encode(), body, hashlib.sha256).hexdigest()
+            if not hmac.compare_digest(signature, expected_signature):
+                logger.warning("Invalid webhook signature")
+                return web.Response(text="Invalid signature", status=401)
         # Parse JSON payload
-        data = await request.json()
+        data = json.loads(body.decode())
         logger.info("Webhook received payload: %s", json.dumps(data, indent=2))
         
         # Extract audio URL and folder ID (payload structure: payload['data'])
