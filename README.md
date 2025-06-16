@@ -33,6 +33,5 @@ Keep `service_account.json` (Google Drive service account) in project root or se
 - [x] Collect interview parameters via Telegram conversation.
 - [x] Create Drive folder & share link.
 - [x] Clone ElevenLabs base agent and return share link.
-- [x] Webhook: auto-upload completed conversation audio to Drive.
+- [ ] Webhook: receive `conversation_finished`, download audio, upload to Drive.
 - [ ] Error monitoring & logging.
-- [ ] Optional: per-user folders vs shared link logic.
