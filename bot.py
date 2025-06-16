@@ -80,8 +80,19 @@ _SCOPES = [
 ]
 
 def _drive_service():
+    """Return cached Google Drive service instance."""
     creds = Credentials.from_service_account_file(GOOGLE_SERVICE_ACCOUNT_JSON, scopes=_SCOPES)
     return build("drive", "v3", credentials=creds)
+
+# helper: get or create subfolder inside a parent folder
+def get_or_create_subfolder(parent_id: str, name: str) -> str:
+    svc = _drive_service()
+    query = f"name='{name}' and mimeType='application/vnd.google-apps.folder' and '{parent_id}' in parents and trashed=false"
+    res = svc.files().list(q=query, fields="files(id)").execute()
+    if res.get("files"):
+        return res["files"][0]["id"]
+    meta = {"name": name, "mimeType": "application/vnd.google-apps.folder", "parents": [parent_id]}
+    return svc.files().create(body=meta, fields="id").execute()["id"]
 
 def create_drive_folder(topic: str) -> Dict[str, str]:
     """Create a folder for the user, return {id, link}. Synchronous helper for to_thread."""
@@ -142,8 +153,9 @@ async def fetch_and_upload_audio(conv_id: str, folder_id: str):
             return
     try:
         service = _drive_service()
+        audio_folder = get_or_create_subfolder(folder_id, "audio")
         media_mp3 = MediaInMemoryUpload(audio_bytes, mimetype="audio/mpeg", resumable=False)
-        service.files().create(body={"name": f"{conv_id}.mp3", "parents": [folder_id]}, media_body=media_mp3).execute()
+        service.files().create(body={"name": f"{conv_id}.mp3", "parents": [audio_folder]}, media_body=media_mp3).execute()
         logger.info("Uploaded audio mp3 for %s", conv_id)
     except Exception as e:
         logger.exception("Drive upload mp3 failed: %s", e)
@@ -346,12 +358,8 @@ async def elevenlabs_webhook(request: web.Request):
         if transcript:
             try:
                 convo_id = inner.get("conversation_id", "conversation")
-                # plain txt
-                lines_txt = [f"{item.get('role','').upper()}: {item.get('message','')}" for item in transcript]
-                text_content = "\n".join(lines_txt)
-                media_txt = MediaInMemoryUpload(text_content.encode("utf-8"), mimetype="text/plain", resumable=False)
-                service.files().create(body={"name": f"{convo_id}_transcript.txt", "parents": [fid]}, media_body=media_txt).execute()
-                # VTT
+                transcripts_folder = get_or_create_subfolder(fid, "transcripts")
+                # Build VTT content (but save as .txt)
                 def secs_to_ts(s: float):
                     h = int(s//3600); m = int((s%3600)//60); sec = s%60
                     return f"{h:02}:{m:02}:{sec:06.3f}".replace('.',',')
@@ -361,8 +369,8 @@ async def elevenlabs_webhook(request: web.Request):
                     end = transcript[idx+1].get('time_in_call_secs', start+2) if idx+1 < len(transcript) else start+2
                     cues.append(f"{idx+1}\n{secs_to_ts(start)} --> {secs_to_ts(end)}\n{item.get('role','')}: {item.get('message','')}\n")
                 vtt_content = "WEBVTT\n\n" + "\n".join(cues)
-                media_vtt = MediaInMemoryUpload(vtt_content.encode('utf-8'), mimetype="text/vtt", resumable=False)
-                service.files().create(body={"name": f"{convo_id}.vtt", "parents": [fid]}, media_body=media_vtt).execute()
+                media_vtt = MediaInMemoryUpload(vtt_content.encode('utf-8'), mimetype="text/plain", resumable=False)
+                service.files().create(body={"name": f"{convo_id}.txt", "parents": [transcripts_folder]}, media_body=media_vtt).execute()
                 logger.info("Uploaded transcript TXT and VTT for %s", convo_id)
                 # trigger audio fetch in background
                 asyncio.create_task(fetch_and_upload_audio(convo_id, fid))
