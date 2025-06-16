@@ -100,7 +100,7 @@ def create_drive_folder(topic: str) -> Dict[str, str]:
 ELEVEN_API_BASE = "https://api.elevenlabs.io/v1/convai"
 
 async def clone_agent(variables: Dict[str, Any]) -> Dict[str, str]:
-    """Clone base agent and return {agent_id, share_url}."""
+    """Clone base agent via `from_agent_id` and return {agent_id, share_url}."""
     headers = {
         "xi-api-key": ELEVENLABS_API_KEY,
         "Content-Type": "application/json",
@@ -109,31 +109,30 @@ async def clone_agent(variables: Dict[str, Any]) -> Dict[str, str]:
         f"UX Interviewer - {variables['interview_topic']} - "
         f"{datetime.utcnow().strftime('%Y%m%dT%H%M%S')}"
     )
-    clone_url = f"{ELEVEN_API_BASE}/agents/{ELEVENLABS_BASE_AGENT_ID}/clone"
+
+    # 1) create new agent based on base one
+    create_url = f"{ELEVEN_API_BASE}/agents"
     payload = {
+        "from_agent_id": ELEVENLABS_BASE_AGENT_ID,
         "name": name,
         "description": variables.get("interview_goals", ""),
-        # additional fields if needed
     }
     async with aiohttp.ClientSession() as session:
-        async with session.post(clone_url, headers=headers, json=payload) as resp:
-            if resp.status != 200:
-                text = await resp.text()
+        async with session.post(create_url, headers=headers, json=payload) as resp:
+            if resp.status not in (200, 201):
                 raise RuntimeError(
-                    f"Failed to clone agent: {resp.status} {text}"
+                    f"Failed to create agent: {resp.status} {await resp.text()}"
                 )
             data = await resp.json()
         agent_id = data.get("agent_id") or data.get("id")
         if not agent_id:
-            raise RuntimeError("clone response missing agent_id")
+            raise RuntimeError("create response missing agent_id")
 
-        # Retrieve (or create) share link
+        # 2) get or create share link
         link_url = f"{ELEVEN_API_BASE}/agents/{agent_id}/link"
         async with session.get(link_url, headers=headers) as resp_link:
             if resp_link.status == 404:
-                # maybe need to create link first
-                create_link_url = f"{ELEVEN_API_BASE}/agents/{agent_id}/link"
-                async with session.post(create_link_url, headers=headers) as resp_create:
+                async with session.post(link_url, headers=headers) as resp_create:
                     if resp_create.status not in (200, 201):
                         raise RuntimeError(
                             f"Failed to create share link: {resp_create.status} "
