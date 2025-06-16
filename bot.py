@@ -7,6 +7,7 @@ import logging
 import os
 from datetime import datetime
 from typing import Dict, Any
+from urllib.parse import quote
 
 import aiohttp
 from dotenv import load_dotenv
@@ -97,166 +98,24 @@ def create_drive_folder(topic: str) -> Dict[str, str]:
 # ---------------------------------------------------------------------------
 # ElevenLabs helpers
 # ---------------------------------------------------------------------------
-ELEVEN_API_BASE = "https://api.elevenlabs.io/v1/convai"
+BASE_PAGE_URL = "https://shipaleks.github.io/ux-moderator-windsurf/"
 
-async def clone_agent(variables: Dict[str, Any]) -> Dict[str, str]:
-    """Clone base agent and return signed URL with injected dynamic variables."""
-    """Clone base agent via `from_agent_id` and return {agent_id, share_url}."""
-    headers = {
-        "xi-api-key": ELEVENLABS_API_KEY,
-        "Content-Type": "application/json",
+def build_interview_link(dynamic_vars):
+    """
+    Build a link to the custom web page with dynamic variables as query parameters.
+    The web page will inject these variables into the ElevenLabs widget.
+    """
+    params = {
+        "agent_id": ELEVENLABS_BASE_AGENT_ID,
+        "interview_topic": dynamic_vars.get("interview_topic", ""),
+        "interview_goals": dynamic_vars.get("interview_goals", ""), 
+        "interview_duration": str(dynamic_vars.get("interview_duration", "20")),
+        "additional_instructions": dynamic_vars.get("additional_instructions", "")
     }
-    name = (
-        f"UX Interviewer - {variables['interview_topic']} - "
-        f"{datetime.utcnow().strftime('%Y%m%dT%H%M%S')}"
-    )
-
-    # 1) get base agent conversation config to copy
-    get_url = f"{ELEVEN_API_BASE}/agents/{ELEVENLABS_BASE_AGENT_ID}"
-    async with aiohttp.ClientSession() as session:
-        async with session.get(get_url, headers=headers) as resp:
-            if resp.status != 200:
-                raise RuntimeError(f"Failed to get base agent: {resp.status} {await resp.text()}")
-            base_agent_data = await resp.json()
-            base_conv_config = base_agent_data.get("conversation_config", {})
-            logger.debug("Base agent conversation_config: %s", base_conv_config)
-            logger.debug("Full base agent data structure: %s", base_agent_data)
-
-    # map keys to agent variable names
-    dynamic_vars = {
-        "interview_topic": variables.get("interview_topic"),
-        "interview_goals": variables.get("interview_goal"),
-        "interview_duration": variables.get("interview_duration"),
-        "additional_instructions": variables.get("additional_instructions"),
-    }
-
-    # 1.5) inject variables directly into system prompt instead of using dynamic variables
-    modified_config = base_conv_config.copy()
-    if "system_prompt" in modified_config:
-        original_prompt = modified_config["system_prompt"]
-        logger.debug("Original system_prompt: %s", original_prompt)
-        # Replace placeholders with actual values
-        modified_config["system_prompt"] = original_prompt.replace(
-            "{{interview_topic}}", dynamic_vars.get("interview_topic", "[тема не указана]")
-        ).replace(
-            "{{interview_goals}}", dynamic_vars.get("interview_goals", "[цели не указаны]")
-        ).replace(
-            "{{interview_duration}}", str(dynamic_vars.get("interview_duration", "20"))
-        ).replace(
-            "{{additional_instructions}}", dynamic_vars.get("additional_instructions", "")
-        )
-        logger.debug("Modified system_prompt: %s", modified_config["system_prompt"])
-    else:
-        logger.warning("No system_prompt found in base agent config")
-        
-    # Also replace in first_message if it exists
-    if "first_message" in modified_config:
-        original_first = modified_config["first_message"]
-        logger.debug("Original first_message: %s", original_first)
-        modified_config["first_message"] = original_first.replace(
-            "{{interview_topic}}", dynamic_vars.get("interview_topic", "[тема не указана]")
-        ).replace(
-            "{{interview_goals}}", dynamic_vars.get("interview_goals", "[цели не указаны]")
-        ).replace(
-            "{{interview_duration}}", str(dynamic_vars.get("interview_duration", "20"))
-        ).replace(
-            "{{additional_instructions}}", dynamic_vars.get("additional_instructions", "")
-        )
-        logger.debug("Modified first_message: %s", modified_config["first_message"])
-    else:
-        logger.warning("No first_message found in base agent config")
-
-    # 1.6) create new agent by cloning with modified config
-    name = f"UX-Интервьюер-{dynamic_vars.get('interview_topic', 'Topic')[:20]}"
-    create_url = f"{ELEVEN_API_BASE}/agents/create"
-    payload = {
-        "from_agent_id": ELEVENLABS_BASE_AGENT_ID,
-        "name": name,
-        "description": dynamic_vars.get("interview_goals", ""),
-        "conversation_config": modified_config,
-    }
-    logger.debug("Agent creation payload: %s", payload)
-    async with aiohttp.ClientSession() as session:
-        async with session.post(create_url, headers=headers, json=payload) as resp:
-            if resp.status not in (200, 201):
-                raise RuntimeError(
-                    f"Failed to create agent: {resp.status} {await resp.text()}"
-                )
-            data = await resp.json()
-        logger.debug("ElevenLabs create response: %s", data)
-        agent_id = data.get("agent_id") or data.get("id")
-        if not agent_id:
-            raise RuntimeError("create response missing agent_id")
-
-        # 2) get or create share link
-        link_url = f"{ELEVEN_API_BASE}/agents/{agent_id}/link"
-        async with session.get(link_url, headers=headers) as resp_link:
-            if resp_link.status == 404:
-                async with session.post(link_url, headers=headers) as resp_create:
-                    if resp_create.status not in (200, 201):
-                        raise RuntimeError(
-                            f"Failed to create share link: {resp_create.status} "
-                            f"{await resp_create.text()}"
-                        )
-                    link_data = await resp_create.json()
-                    logger.debug("ElevenLabs link create response: %s", link_data)
-            elif resp_link.status in (200, 201):
-                link_data = await resp_link.json()
-                logger.debug("ElevenLabs link get response: %s", link_data)
-            else:
-                raise RuntimeError(
-                    f"Failed to fetch share link: {resp_link.status} {await resp_link.text()}"
-                )
-
-    share_url = (
-        link_data.get("url")
-        or link_data.get("share_link", {}).get("url")
-        or link_data.get("web_url")
-    )
-
-    # If API returned token instead of URL, build signed or public link
-    if not share_url:
-        token_val = link_data.get("token")
-        if token_val:
-            # signed link with token
-            share_url = (
-                f"https://elevenlabs.io/app/talk-to?agent_id={agent_id}&token={token_val}"
-                if isinstance(token_val, str)
-                else None
-            )
-        # final fallback – public page pattern
-        if not share_url:
-            share_url = f"https://elevenlabs.io/app/talk-to?agent_id={agent_id}"
-    if not share_url:
-        logger.error("Could not determine share URL from link_data: %s", link_data)
-
-    # Try signed URL API again now that overrides are enabled
-    signed_url = f"{ELEVEN_API_BASE}/conversation/get-signed-url"
-    # ElevenLabs expects each dynamic variable as query param named dynamic_variable__<var>
-    params = {f"dynamic_variable__{k}": v for k, v in dynamic_vars.items()}
-    params["agent_id"] = agent_id
-    async with aiohttp.ClientSession() as signed_session:
-        async with signed_session.get(signed_url, headers=headers, params=params) as resp_signed:
-            try:
-                body_text = await resp_signed.text()
-            except Exception:
-                body_text = "<could not read body>"
-            logger.debug("Signed URL status=%s body=%s", resp_signed.status, body_text)
-            if resp_signed.status in (200, 201):
-                try:
-                    signed_data = json.loads(body_text)
-                except Exception:
-                    signed_data = {}
-                signed_url_value = signed_data.get("url") or signed_data.get("signed_url")
-                if signed_url_value:
-                    logger.info("Using signed URL with overrides: %s", signed_url_value)
-                    return {"agent_id": agent_id, "share_url": signed_url_value}
-                logger.warning("Signed URL success response missing url field: %s", signed_data)
-
-    # 2) since variables are now embedded in agent, use the simple share_url
-    logger.info("Variables embedded in agent config, using public share URL: %s", share_url)
-
-    return {"agent_id": agent_id, "share_url": share_url}
+    
+    # URL encode parameters
+    query_string = "&".join([f"{k}={quote(str(v))}" for k, v in params.items() if v])
+    return f"{BASE_PAGE_URL}?{query_string}"
 
 # ---------------------------------------------------------------------------
 # Telegram conversation states
@@ -309,20 +168,15 @@ async def duration(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         await update.message.reply_text(f"Ошибка создания папки на Google Drive: {e}")
         return ConversationHandler.END
 
-    # 2. Clone ElevenLabs agent
-    try:
-        agent_info = await clone_agent(user_data)
-    except Exception as e:
-        logger.exception("ElevenLabs error")
-        await update.message.reply_text(f"Ошибка ElevenLabs: {e}")
-        return ConversationHandler.END
+    # 2. Build interview link
+    interview_link = build_interview_link(user_data)
 
     # 3. Reply with links
     reply = (
         "Готово! \U0001F389\n\n"
-        f"• Ссылка на агента (действительна 15 мин): {agent_info['share_url']}\n"
+        f"• Ссылка на интервью: {interview_link}\n"
         f"• Папка Google Drive: {folder_info['link']}\n\n"
-        "Передайте ссылку респондентам сразу после генерации. \nПосле истечения 15 минут создайте новую командой /start.\nАудиозаписи будут сохраняться в указанную папку. Удачи!"
+        "Передайте ссылку респондентам сразу после генерации. \nАудиозаписи будут сохраняться в указанную папку. Удачи!"
     )
     await update.message.reply_text(reply)
 
