@@ -232,7 +232,7 @@ async def clone_agent(variables: Dict[str, Any]) -> Dict[str, str]:
 
     # Try signed URL API again now that overrides are enabled
     signed_url = f"{ELEVEN_API_BASE}/conversation/get-signed-url"
-    params = {"overrides": {"variables": dynamic_vars}, "agent_id": agent_id}
+    params = {**dynamic_vars, "agent_id": agent_id}
     async with aiohttp.ClientSession() as signed_session:
         async with signed_session.get(signed_url, headers=headers, params=params) as resp_signed:
             if resp_signed.status in (200, 201):
