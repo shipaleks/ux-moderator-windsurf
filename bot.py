@@ -112,12 +112,21 @@ async def clone_agent(variables: Dict[str, Any]) -> Dict[str, str]:
 
     # 1) create new agent based on base one
     create_url = f"{ELEVEN_API_BASE}/agents/create"
+    # fetch base agent details to copy conversation_config
+    async with aiohttp.ClientSession() as session:
+        async with session.get(f"{ELEVEN_API_BASE}/agents/{ELEVENLABS_BASE_AGENT_ID}", headers=headers) as base_resp:
+            if base_resp.status != 200:
+                raise RuntimeError(
+                    f"Failed to fetch base agent: {base_resp.status} {await base_resp.text()}"
+                )
+            base_agent_data = await base_resp.json()
+            base_conv_config = base_agent_data.get("conversation_config", {})
+    
     payload = {
         "from_agent_id": ELEVENLABS_BASE_AGENT_ID,
         "name": name,
         "description": variables.get("interview_goals", ""),
-        # minimal required config; can be extended with dynamic vars later
-        "conversation_config": {},
+        "conversation_config": base_conv_config,
     }
     async with aiohttp.ClientSession() as session:
         async with session.post(create_url, headers=headers, json=payload) as resp:
