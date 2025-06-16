@@ -26,6 +26,21 @@ from telegram.ext import (
 # Environment & Logging
 # ---------------------------------------------------------------------------
 load_dotenv()
+
+# ---------------------------------------------------------------------------
+# Optionally reconstruct Google service account JSON from env variables
+# ---------------------------------------------------------------------------
+# If SERVICE_ACCOUNT_JSON (raw JSON string) is present, write it to file;
+# otherwise, if SERVICE_ACCOUNT_B64 contains base64-encoded JSON, decode it.
+if not os.path.exists("service_account.json"):
+    if os.getenv("SERVICE_ACCOUNT_JSON"):
+        with open("service_account.json", "w") as f:
+            f.write(os.environ["SERVICE_ACCOUNT_JSON"])
+    elif os.getenv("SERVICE_ACCOUNT_B64"):
+        import base64
+        with open("service_account.json", "wb") as f:
+            f.write(base64.b64decode(os.environ["SERVICE_ACCOUNT_B64"]))
+
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
