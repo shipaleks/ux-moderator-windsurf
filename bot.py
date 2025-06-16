@@ -199,9 +199,18 @@ async def clone_agent(variables: Dict[str, Any]) -> Dict[str, str]:
             "dynamic_variables": {k: v for k, v in dynamic_vars.items() if v}
         },
     }
-    signed_url_endpoint = f"{ELEVEN_API_BASE}/conversations/get-signed-url"
+    # Endpoint now uses singular 'conversation' and expects GET (POST returns 405)
+    import urllib.parse, json as _json
+    query_params = {
+        "agent_id": agent_id,
+        "expires_in_seconds": 900,  # max allowed
+        "conversation_config_override": _json.dumps({
+            "dynamic_variables": {k: v for k, v in dynamic_vars.items() if v}
+        }),
+    }
+    signed_url_endpoint = f"{ELEVEN_API_BASE}/conversation/get-signed-url?" + urllib.parse.urlencode(query_params)
     async with aiohttp.ClientSession() as session:
-        async with session.post(signed_url_endpoint, headers=headers, json=signed_payload) as signed_resp:
+        async with session.get(signed_url_endpoint, headers=headers) as signed_resp:
             if signed_resp.status not in (200, 201):
                 raise RuntimeError(
                     f"Failed to get signed URL: {signed_resp.status} {await signed_resp.text()}"
