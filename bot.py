@@ -120,6 +120,7 @@ async def clone_agent(variables: Dict[str, Any]) -> Dict[str, str]:
             base_agent_data = await resp.json()
             base_conv_config = base_agent_data.get("conversation_config", {})
             logger.debug("Base agent conversation_config: %s", base_conv_config)
+            logger.debug("Full base agent data structure: %s", base_agent_data)
 
     # map keys to agent variable names
     dynamic_vars = {
