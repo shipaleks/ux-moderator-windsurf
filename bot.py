@@ -98,7 +98,8 @@ def create_drive_folder(topic: str) -> Dict[str, str]:
 # ---------------------------------------------------------------------------
 # ElevenLabs helpers
 # ---------------------------------------------------------------------------
-BASE_PAGE_URL = "https://shipaleks.github.io/ux-moderator-windsurf/"
+# Base URL for the custom web page with ElevenLabs widget
+BASE_PAGE_URL = "https://shipaleks.github.io/ux-moderator-windsurf/web/index.html"
 
 def build_interview_link(dynamic_vars):
     """
