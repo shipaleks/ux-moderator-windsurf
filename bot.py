@@ -100,6 +100,7 @@ def create_drive_folder(topic: str) -> Dict[str, str]:
 ELEVEN_API_BASE = "https://api.elevenlabs.io/v1/convai"
 
 async def clone_agent(variables: Dict[str, Any]) -> Dict[str, str]:
+    """Clone base agent and return signed URL with injected dynamic variables."""
     """Clone base agent via `from_agent_id` and return {agent_id, share_url}."""
     headers = {
         "xi-api-key": ELEVENLABS_API_KEY,
@@ -122,10 +123,18 @@ async def clone_agent(variables: Dict[str, Any]) -> Dict[str, str]:
             base_agent_data = await base_resp.json()
             base_conv_config = base_agent_data.get("conversation_config", {})
     
+    # map keys to agent variable names
+    dynamic_vars = {
+        "interview_topic": variables.get("interview_topic"),
+        "interview_goals": variables.get("interview_goal"),
+        "interview_duration": variables.get("interview_duration"),
+        "additional_instructions": variables.get("additional_instructions"),
+    }
+
     payload = {
         "from_agent_id": ELEVENLABS_BASE_AGENT_ID,
         "name": name,
-        "description": variables.get("interview_goals", ""),
+        "description": dynamic_vars.get("interview_goals", ""),
         "conversation_config": base_conv_config,
     }
     async with aiohttp.ClientSession() as session:
@@ -181,6 +190,24 @@ async def clone_agent(variables: Dict[str, Any]) -> Dict[str, str]:
             share_url = f"https://elevenlabs.io/app/talk-to?agent_id={agent_id}"
     if not share_url:
         logger.error("Could not determine share URL from link_data: %s", link_data)
+
+    # 2) get signed URL injecting dynamic variables
+    signed_payload = {
+        "agent_id": agent_id,
+        "expires_in_seconds": 3600,
+        "conversation_config_override": {
+            "dynamic_variables": {k: v for k, v in dynamic_vars.items() if v}
+        },
+    }
+    signed_url_endpoint = f"{ELEVEN_API_BASE}/conversations/get-signed-url"
+    async with aiohttp.ClientSession() as session:
+        async with session.post(signed_url_endpoint, headers=headers, json=signed_payload) as signed_resp:
+            if signed_resp.status not in (200, 201):
+                raise RuntimeError(
+                    f"Failed to get signed URL: {signed_resp.status} {await signed_resp.text()}"
+                )
+            signed_data = await signed_resp.json()
+            share_url = signed_data.get("url") or share_url  # fallback to previous
 
     return {"agent_id": agent_id, "share_url": share_url}
 
