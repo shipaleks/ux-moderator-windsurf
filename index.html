@@ -1,2 +1,6 @@
 <!doctype html>
-<meta http-equiv="refresh" content="0;URL=web/index.html">
+<script>
+// Preserve query string when redirecting to /web/index.html
+const qs = window.location.search;
+window.location.replace(`web/index.html${qs}`);
+</script>

@@ -15,8 +15,7 @@ export async function onRequest(context) {
   const headers = new Headers(request.headers);
   headers.set("xi-api-key", env.ELEVEN_KEY);
   headers.delete("host");
-  headers.delete("origin");
-  headers.delete("referer");
+
 
   const init = {
     method: request.method,
