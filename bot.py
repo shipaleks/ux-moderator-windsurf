@@ -164,7 +164,8 @@ async def fetch_and_upload_audio(conv_id: str, folder_id: str):
 # ElevenLabs helpers
 # ---------------------------------------------------------------------------
 # Base URL for the custom web page with ElevenLabs widget
-BASE_PAGE_URL = "https://shipaleks.github.io/ux-moderator-windsurf/web/index.html"
+# Base URL for public web widget (Cloudflare Pages). Set CF_BASE_URL env in Railway.
+BASE_PAGE_URL = os.getenv("CF_BASE_URL", "https://shipaleks.github.io/ux-moderator-windsurf/web/index.html")
 
 def build_interview_link(dynamic_vars):
     """
@@ -311,7 +312,7 @@ async def elevenlabs_webhook(request: web.Request):
 
         # HMAC signature validation (enabled if EL_WEBHOOK_SECRET env var is set)
         body = await request.read()
-        webhook_secret = os.getenv("EL_WEBHOOK_SECRET")
+        webhook_secret = os.getenv("EL_WEBHOOK_SECRET") or os.getenv("ELEVEN_WEBHOOK_SECRET")
         if webhook_secret:
             signature = request.headers.get("X-Elevenlabs-Signature")
             if not signature:
