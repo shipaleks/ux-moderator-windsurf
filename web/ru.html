@@ -20,30 +20,72 @@
   </elevenlabs-convai>
 
   <script>
-    const widget = document.getElementById('widget');
-    
-    // Set base URLs via JS for robustness, ensuring all API calls go through the proxy
-    widget.apiBaseUrl = '/api';
-    widget.inferenceApiBaseUrl = '/api';
-    
-    // Берём параметры URL
-    const p = new URLSearchParams(window.location.search);
-
-    // agent_id можно передать параметром, иначе используется тот, что в атрибуте
-    const agentId = p.get('agent_id');
-    if (agentId) {
-      widget.setAttribute('agent-id', agentId);
-    }
-
-    // Собираем dynamic variables (любой параметр, кроме agent_id)
-    const dyn = {};
-    p.forEach((value, key) => {
-      if (key !== 'agent_id') {
-        dyn[key] = value;
+    // Ждем загрузки виджета и переопределяем его настройки
+    function setupWidget() {
+      const widget = document.getElementById('widget');
+      
+      if (!widget || !widget.shadowRoot) {
+        // Виджет еще не готов, пробуем снова через 100ms
+        setTimeout(setupWidget, 100);
+        return;
       }
-    });
-    // Записываем их в атрибут dynamic-variables
-    widget.setAttribute('dynamic-variables', JSON.stringify(dyn));
+      
+      // Принудительно устанавливаем базовые URL через все возможные способы
+      widget.apiBaseUrl = '/api';
+      widget.inferenceApiBaseUrl = '/api';
+      widget.setAttribute('api-base-url', '/api');
+      widget.setAttribute('inference-api-base-url', '/api');
+      
+      // Пытаемся переопределить внутренние настройки виджета
+      if (widget._config) {
+        widget._config.apiBaseUrl = '/api';
+        widget._config.inferenceApiBaseUrl = '/api';
+      }
+      
+      // Если у виджета есть метод для обновления конфигурации
+      if (widget.updateConfig) {
+        widget.updateConfig({
+          apiBaseUrl: '/api',
+          inferenceApiBaseUrl: '/api'
+        });
+      }
+      
+      // Обработка параметров URL
+      const p = new URLSearchParams(window.location.search);
+      const agentId = p.get('agent_id');
+      if (agentId) {
+        widget.setAttribute('agent-id', agentId);
+      }
+      
+      // Собираем dynamic variables
+      const dyn = {};
+      p.forEach((value, key) => {
+        if (key !== 'agent_id') {
+          dyn[key] = value;
+        }
+      });
+      widget.setAttribute('dynamic-variables', JSON.stringify(dyn));
+    }
+    
+    // Запускаем настройку виджета
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', setupWidget);
+    } else {
+      setupWidget();
+    }
+    
+    // Дополнительно пробуем перехватить и переписать fetch запросы
+    const originalFetch = window.fetch;
+    window.fetch = function(url, options) {
+      // Если URL содержит api.elevenlabs.io или api.us.elevenlabs.io, переписываем его
+      if (typeof url === 'string' && (url.includes('api.elevenlabs.io') || url.includes('api.us.elevenlabs.io'))) {
+        const urlObj = new URL(url);
+        const newUrl = `/api${urlObj.pathname}${urlObj.search}`;
+        console.log('Redirecting API call from', url, 'to', newUrl);
+        return originalFetch.call(this, newUrl, options);
+      }
+      return originalFetch.call(this, url, options);
+    };
   </script>
 </body>
 </html>
