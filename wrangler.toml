@@ -1,0 +1,17 @@
+name = "elevenlabs-proxy"
+main = "worker-proxy.js"
+compatibility_date = "2024-06-27"
+compatibility_flags = ["nodejs_compat"]
+
+# Переменные окружения (будут настроены через Dashboard)
+[vars]
+# ELEVEN_KEY будет добавлен через Dashboard как секрет
+
+# Настройки для обработки всех путей
+[[routes]]
+pattern = "your-domain.com/api/*"
+zone_name = "your-domain.com"
+
+# Лимиты CPU (опционально, для контроля расходов)
+[limits]
+cpu_ms = 50

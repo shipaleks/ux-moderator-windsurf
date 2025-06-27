@@ -15,8 +15,8 @@
   <elevenlabs-convai 
     id="widget" 
     agent-id="agent_01jxv44dq3f09afkz7n7m7mxac"
-    api-base-url="/api"
-    inference-api-base-url="/api">
+    api-base-url="/api/convai"
+    inference-api-base-url="/api/convai">
   </elevenlabs-convai>
 
   <script>
@@ -31,22 +31,22 @@
       }
       
       // Принудительно устанавливаем базовые URL через все возможные способы
-      widget.apiBaseUrl = '/api';
-      widget.inferenceApiBaseUrl = '/api';
-      widget.setAttribute('api-base-url', '/api');
-      widget.setAttribute('inference-api-base-url', '/api');
+      widget.apiBaseUrl = '/api/convai';
+      widget.inferenceApiBaseUrl = '/api/convai';
+      widget.setAttribute('api-base-url', '/api/convai');
+      widget.setAttribute('inference-api-base-url', '/api/convai');
       
       // Пытаемся переопределить внутренние настройки виджета
       if (widget._config) {
-        widget._config.apiBaseUrl = '/api';
-        widget._config.inferenceApiBaseUrl = '/api';
+        widget._config.apiBaseUrl = '/api/convai';
+        widget._config.inferenceApiBaseUrl = '/api/convai';
       }
       
       // Если у виджета есть метод для обновления конфигурации
       if (widget.updateConfig) {
         widget.updateConfig({
-          apiBaseUrl: '/api',
-          inferenceApiBaseUrl: '/api'
+          apiBaseUrl: '/api/convai',
+          inferenceApiBaseUrl: '/api/convai'
         });
       }
       
@@ -92,38 +92,15 @@
     window.WebSocket = function(url, protocols) {
       console.log('WebSocket connection attempt to:', url);
       
-      // Если пытаемся подключиться к ElevenLabs API
+      // Если пытаемся подключиться к ElevenLabs API, переписываем URL для прокси
       if (url.includes('api.elevenlabs.io') || url.includes('api.us.elevenlabs.io')) {
-        // Показываем сообщение об ограничении
-        const errorMsg = `
-          <div style="position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); 
-                      background: #ff4444; color: white; padding: 20px; border-radius: 10px; 
-                      z-index: 9999; text-align: center; max-width: 500px;">
-            <h3>Ограничение доступа из России</h3>
-            <p>К сожалению, голосовая функция недоступна из России из-за технических ограничений.</p>
-            <p>Возможные решения:</p>
-            <ul style="text-align: left;">
-              <li>Использовать VPN</li>
-              <li>Попросить респондента из другой страны</li>
-              <li>Дождаться альтернативного решения</li>
-            </ul>
-            <button onclick="this.parentElement.remove()" 
-                    style="margin-top: 10px; padding: 5px 20px; background: white; color: #ff4444; 
-                           border: none; border-radius: 5px; cursor: pointer;">
-              Закрыть
-            </button>
-          </div>
-        `;
-        document.body.insertAdjacentHTML('beforeend', errorMsg);
+        const urlObj = new URL(url);
+        const newUrl = `/api${urlObj.pathname}${urlObj.search}`;
+        console.log('Redirecting WebSocket from', url, 'to', newUrl);
         
-        // Возвращаем фейковый WebSocket, чтобы не сломать виджет полностью
-        return {
-          readyState: 3, // CLOSED
-          close: () => {},
-          send: () => {},
-          addEventListener: () => {},
-          removeEventListener: () => {}
-        };
+        // Создаем WebSocket через наш прокси
+        const wsUrl = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}${newUrl}`;
+        return new OriginalWebSocket(wsUrl, protocols);
       }
       
       return new OriginalWebSocket(url, protocols);
