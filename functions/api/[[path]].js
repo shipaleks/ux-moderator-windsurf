@@ -1,7 +1,6 @@
-// Cloudflare Pages Function: catch-all proxy to ElevenLabs Convai API
-// Route: /api/convai/* (the part after /api/convai is captured in param `path`)
+// Cloudflare Pages Function: catch-all proxy to ElevenLabs API
+// Route: /api/*
 // Required env var: ELEVEN_KEY – your ElevenLabs API key
-// Docs: https://developers.cloudflare.com/pages/functions/
 
 export async function onRequest(context) {
   const { request, env, params } = context;
@@ -11,15 +10,15 @@ export async function onRequest(context) {
     return handleCors();
   }
 
-  // Build target URL – keep original query string
-  const suffix = params.path ? `/${params.path}` : "";
+  // Build target URL
+  const path = Array.isArray(params.path) ? params.path.join('/') : "";
   const origUrl = new URL(request.url);
-  const target = `https://api.elevenlabs.io${suffix}${origUrl.search}`;
+  const target = `https://api.elevenlabs.io/${path}${origUrl.search}`;
 
   // Clone headers & inject key
   const headers = new Headers(request.headers);
   headers.set("xi-api-key", env.ELEVEN_KEY);
-  headers.delete("host");
+  headers.delete("host"); // Let fetch set the correct host
 
   const init = {
     method: request.method,
@@ -33,8 +32,6 @@ export async function onRequest(context) {
     
     // Create a new response with CORS headers
     const responseHeaders = new Headers(resp.headers);
-    
-    // Add CORS headers
     responseHeaders.set("Access-Control-Allow-Origin", "*");
     responseHeaders.set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
     responseHeaders.set("Access-Control-Allow-Headers", "Content-Type, Authorization, xi-api-key");
@@ -44,6 +41,7 @@ export async function onRequest(context) {
       headers: responseHeaders 
     });
   } catch (error) {
+    console.error("Proxy error:", error);
     return new Response(JSON.stringify({ error: "Failed to proxy request" }), {
       status: 500,
       headers: {

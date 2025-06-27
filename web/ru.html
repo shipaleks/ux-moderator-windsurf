@@ -15,17 +15,24 @@
   <elevenlabs-convai 
     id="widget" 
     agent-id="agent_01jxv44dq3f09afkz7n7m7mxac"
-    api-base-url="/api/convai">
+    api-base-url="/api"
+    inference-api-base-url="/api">
   </elevenlabs-convai>
 
   <script>
+    const widget = document.getElementById('widget');
+    
+    // Set base URLs via JS for robustness, ensuring all API calls go through the proxy
+    widget.apiBaseUrl = '/api';
+    widget.inferenceApiBaseUrl = '/api';
+    
     // Берём параметры URL
     const p = new URLSearchParams(window.location.search);
 
     // agent_id можно передать параметром, иначе используется тот, что в атрибуте
     const agentId = p.get('agent_id');
     if (agentId) {
-      document.getElementById('widget').setAttribute('agent-id', agentId);
+      widget.setAttribute('agent-id', agentId);
     }
 
     // Собираем dynamic variables (любой параметр, кроме agent_id)
@@ -36,8 +43,7 @@
       }
     });
     // Записываем их в атрибут dynamic-variables
-    document.getElementById('widget')
-            .setAttribute('dynamic-variables', JSON.stringify(dyn));
+    widget.setAttribute('dynamic-variables', JSON.stringify(dyn));
   </script>
 </body>
 </html>
