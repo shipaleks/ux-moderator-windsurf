@@ -1,5 +1,5 @@
-// Cloudflare Worker для полного прокси ElevenLabs API (включая WebSocket)
-// Поддерживает как HTTP/HTTPS запросы, так и WebSocket соединения
+// Cloudflare Worker для полного прокси ElevenLabs API с поддержкой WebSocket (April 2025+)
+// Требует compatibility_date >= "2025-04-15"
 
 export default {
   async fetch(request, env, ctx) {
@@ -15,7 +15,7 @@ export default {
   }
 };
 
-// Обработка WebSocket соединений
+// Обработка WebSocket соединений (новый API April 2025)
 async function handleWebSocket(request, env) {
   const url = new URL(request.url);
   
@@ -27,68 +27,104 @@ async function handleWebSocket(request, env) {
   
   console.log('WebSocket proxy:', request.url, '->', targetUrl);
   
-  // Создаем WebSocket пару
-  const webSocketPair = new WebSocketPair();
-  const [client, server] = Object.values(webSocketPair);
-  
   try {
-    // Создаем WebSocket соединение с ElevenLabs
-    const targetWs = new WebSocket(targetUrl, [], {
-      headers: {
-        'xi-api-key': env.ELEVEN_KEY
+    // 1️⃣ Создаем пару WebSocket
+    const webSocketPair = new WebSocketPair();
+    const [clientWS, serverWS] = Object.values(webSocketPair);
+    
+    // Принимаем соединение от клиента
+    serverWS.accept();
+    
+    // 2️⃣ Устанавливаем соединение с ElevenLabs (новый API!)
+    const upstream = await fetch(targetUrl, {
+      headers: { 
+        'Upgrade': 'websocket',
+        'xi-api-key': env.ELEVEN_KEY 
       }
     });
     
-    // Принимаем WebSocket соединение от клиента
-    server.accept();
+    if (upstream.status !== 101) {
+      throw new Error(`WebSocket upgrade failed with status: ${upstream.status}`);
+    }
     
-    // Проксируем сообщения от клиента к ElevenLabs
-    server.addEventListener('message', event => {
-      if (targetWs.readyState === WebSocket.OPEN) {
-        targetWs.send(event.data);
+    const remoteWS = upstream.webSocket;
+    if (!remoteWS) {
+      throw new Error('No WebSocket in upstream response');
+    }
+    
+    remoteWS.accept();
+    
+    // 3️⃣ Проксируем фреймы в обе стороны
+    remoteWS.addEventListener('message', (event) => {
+      try {
+        if (serverWS.readyState === WebSocket.OPEN) {
+          serverWS.send(event.data);
+        }
+      } catch (error) {
+        console.error('Error forwarding message to client:', error);
       }
     });
     
-    // Проксируем сообщения от ElevenLabs к клиенту
-    targetWs.addEventListener('message', event => {
-      if (server.readyState === WebSocket.OPEN) {
-        server.send(event.data);
+    serverWS.addEventListener('message', (event) => {
+      try {
+        if (remoteWS.readyState === WebSocket.OPEN) {
+          remoteWS.send(event.data);
+        }
+      } catch (error) {
+        console.error('Error forwarding message to server:', error);
       }
     });
     
     // Обработка закрытия соединений
-    server.addEventListener('close', event => {
-      console.log('Client WebSocket closed');
-      if (targetWs.readyState === WebSocket.OPEN) {
-        targetWs.close();
+    remoteWS.addEventListener('close', (event) => {
+      console.log('Remote WebSocket closed:', event.code, event.reason);
+      try {
+        if (serverWS.readyState === WebSocket.OPEN) {
+          serverWS.close(event.code, event.reason);
+        }
+      } catch (error) {
+        console.error('Error closing client WebSocket:', error);
       }
     });
     
-    targetWs.addEventListener('close', event => {
-      console.log('Target WebSocket closed');
-      if (server.readyState === WebSocket.OPEN) {
-        server.close();
+    serverWS.addEventListener('close', (event) => {
+      console.log('Client WebSocket closed:', event.code, event.reason);
+      try {
+        if (remoteWS.readyState === WebSocket.OPEN) {
+          remoteWS.close(event.code, event.reason);
+        }
+      } catch (error) {
+        console.error('Error closing remote WebSocket:', error);
       }
     });
     
     // Обработка ошибок
-    server.addEventListener('error', event => {
+    remoteWS.addEventListener('error', (event) => {
+      console.error('Remote WebSocket error:', event);
+      try {
+        if (serverWS.readyState === WebSocket.OPEN) {
+          serverWS.close(1011, 'Remote connection error');
+        }
+      } catch (error) {
+        console.error('Error closing client on remote error:', error);
+      }
+    });
+    
+    serverWS.addEventListener('error', (event) => {
       console.error('Client WebSocket error:', event);
-      if (targetWs.readyState === WebSocket.OPEN) {
-        targetWs.close();
+      try {
+        if (remoteWS.readyState === WebSocket.OPEN) {
+          remoteWS.close(1011, 'Client connection error');
+        }
+      } catch (error) {
+        console.error('Error closing remote on client error:', error);
       }
     });
     
-    targetWs.addEventListener('error', event => {
-      console.error('Target WebSocket error:', event);
-      if (server.readyState === WebSocket.OPEN) {
-        server.close();
-      }
-    });
-    
+    // Возвращаем WebSocket клиенту
     return new Response(null, {
       status: 101,
-      webSocket: client,
+      webSocket: clientWS,
       headers: {
         'Access-Control-Allow-Origin': '*',
         'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
@@ -98,10 +134,11 @@ async function handleWebSocket(request, env) {
     
   } catch (error) {
     console.error('WebSocket proxy error:', error);
-    return new Response('WebSocket connection failed: ' + error.message, { 
+    return new Response(`WebSocket connection failed: ${error.message}`, { 
       status: 500,
       headers: {
-        'Access-Control-Allow-Origin': '*'
+        'Access-Control-Allow-Origin': '*',
+        'Content-Type': 'text/plain'
       }
     });
   }
