@@ -24,22 +24,40 @@ export async function onRequest(context) {
     method: request.method,
     headers,
     body: ["GET", "HEAD"].includes(request.method) ? undefined : request.body,
-    redirect: "follow",
+    redirect: "manual", // IMPORTANT: We handle redirects manually
   };
 
   try {
     const resp = await fetch(target, init);
+
+    // Check if the response is a redirect (301, 302, 307, 308)
+    if (resp.status >= 300 && resp.status < 400 && resp.headers.has("location")) {
+      const location = resp.headers.get("location");
+      const locationUrl = new URL(location);
+
+      // Rewrite the redirect URL to point back to our proxy.
+      // e.g., https://api.us.elevenlabs.io/v1/... -> /api/v1/...
+      const newLocation = `/api${locationUrl.pathname}${locationUrl.search}`;
+
+      const redirectHeaders = new Headers(resp.headers);
+      redirectHeaders.set("Location", newLocation);
+      addCorsHeaders(redirectHeaders);
+
+      return new Response(resp.body, {
+        status: resp.status,
+        headers: redirectHeaders,
+      });
+    }
     
-    // Create a new response with CORS headers
+    // If not a redirect, handle as a normal response
     const responseHeaders = new Headers(resp.headers);
-    responseHeaders.set("Access-Control-Allow-Origin", "*");
-    responseHeaders.set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-    responseHeaders.set("Access-Control-Allow-Headers", "Content-Type, Authorization, xi-api-key");
+    addCorsHeaders(responseHeaders);
     
     return new Response(resp.body, { 
       status: resp.status, 
       headers: responseHeaders 
     });
+
   } catch (error) {
     console.error("Proxy error:", error);
     return new Response(JSON.stringify({ error: "Failed to proxy request" }), {
@@ -52,15 +70,20 @@ export async function onRequest(context) {
   }
 }
 
+// Helper to add standard CORS headers
+function addCorsHeaders(headers) {
+  headers.set("Access-Control-Allow-Origin", "*");
+  headers.set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+  headers.set("Access-Control-Allow-Headers", "Content-Type, Authorization, xi-api-key");
+}
+
 // Helper function for CORS preflight requests
 function handleCors() {
+  const headers = new Headers();
+  addCorsHeaders(headers);
+  headers.set("Access-Control-Max-Age", "86400");
   return new Response(null, {
     status: 204,
-    headers: {
-      "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type, Authorization, xi-api-key",
-      "Access-Control-Max-Age": "86400"
-    }
+    headers: headers
   });
 }
