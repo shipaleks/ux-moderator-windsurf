@@ -15,94 +15,94 @@
   <elevenlabs-convai 
     id="widget" 
     agent-id="agent_01jxv44dq3f09afkz7n7m7mxac"
-    api-base-url="/api/convai"
-    inference-api-base-url="/api/convai">
+    api-base-url="https://elevenlabs-proxy.shipaleks.workers.dev"
+    inference-api-base-url="https://elevenlabs-proxy.shipaleks.workers.dev">
   </elevenlabs-convai>
 
   <script>
-    // Ждем загрузки виджета и переопределяем его настройки
-    function setupWidget() {
-      const widget = document.getElementById('widget');
-      
-      if (!widget || !widget.shadowRoot) {
-        // Виджет еще не готов, пробуем снова через 100ms
-        setTimeout(setupWidget, 100);
-        return;
-      }
-      
-      // Принудительно устанавливаем базовые URL через все возможные способы
-      widget.apiBaseUrl = '/api/convai';
-      widget.inferenceApiBaseUrl = '/api/convai';
-      widget.setAttribute('api-base-url', '/api/convai');
-      widget.setAttribute('inference-api-base-url', '/api/convai');
-      
-      // Пытаемся переопределить внутренние настройки виджета
-      if (widget._config) {
-        widget._config.apiBaseUrl = '/api/convai';
-        widget._config.inferenceApiBaseUrl = '/api/convai';
-      }
-      
-      // Если у виджета есть метод для обновления конфигурации
-      if (widget.updateConfig) {
-        widget.updateConfig({
-          apiBaseUrl: '/api/convai',
-          inferenceApiBaseUrl: '/api/convai'
-        });
-      }
-      
-      // Обработка параметров URL
-      const p = new URLSearchParams(window.location.search);
-      const agentId = p.get('agent_id');
-      if (agentId) {
+    // Настройка виджета для использования Cloudflare Worker прокси
+    const widget = document.getElementById('widget');
+    
+    // Устанавливаем базовые URL для API через прокси (БЕЗ префикса /api)
+    widget.setAttribute('api-base-url', 'https://elevenlabs-proxy.shipaleks.workers.dev');
+    widget.setAttribute('inference-api-base-url', 'https://elevenlabs-proxy.shipaleks.workers.dev');
+    
+    // Получаем параметры из URL
+    const urlParams = new URLSearchParams(window.location.search);
+    const agentId = urlParams.get('agent_id');
+    const dynamicVars = {};
+    
+    // Собираем динамические переменные
+    ['interview_topic', 'interview_goals', 'interview_duration', 'additional_instructions', 'fid'].forEach(key => {
+        const value = urlParams.get(key);
+        if (value) dynamicVars[key] = value;
+    });
+    
+    if (agentId) {
         widget.setAttribute('agent-id', agentId);
-      }
-      
-      // Собираем dynamic variables
-      const dyn = {};
-      p.forEach((value, key) => {
-        if (key !== 'agent_id') {
-          dyn[key] = value;
+    }
+    
+    if (Object.keys(dynamicVars).length > 0) {
+        widget.setAttribute('dynamic-variables', JSON.stringify(dynamicVars));
+    }
+
+    // Агрессивная настройка виджета после загрузки
+    function setupWidget() {
+        const widget = document.getElementById('widget');
+        if (!widget || !widget.shadowRoot) {
+            setTimeout(setupWidget, 100);
+            return;
         }
-      });
-      widget.setAttribute('dynamic-variables', JSON.stringify(dyn));
+        
+        // Принудительно устанавливаем URL прокси
+        widget.apiBaseUrl = 'https://elevenlabs-proxy.shipaleks.workers.dev';
+        widget.inferenceApiBaseUrl = 'https://elevenlabs-proxy.shipaleks.workers.dev';
+        widget.setAttribute('api-base-url', 'https://elevenlabs-proxy.shipaleks.workers.dev');
+        widget.setAttribute('inference-api-base-url', 'https://elevenlabs-proxy.shipaleks.workers.dev');
+        
+        // Обновляем внутреннюю конфигурацию если доступно
+        if (widget._config) {
+            widget._config.apiBaseUrl = 'https://elevenlabs-proxy.shipaleks.workers.dev';
+            widget._config.inferenceApiBaseUrl = 'https://elevenlabs-proxy.shipaleks.workers.dev';
+        }
+        
+        if (widget.updateConfig) {
+            widget.updateConfig({
+                apiBaseUrl: 'https://elevenlabs-proxy.shipaleks.workers.dev',
+                inferenceApiBaseUrl: 'https://elevenlabs-proxy.shipaleks.workers.dev'
+            });
+        }
+        
+        console.log('Widget configured for Cloudflare Worker proxy');
     }
     
-    // Запускаем настройку виджета
-    if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', setupWidget);
-    } else {
-      setupWidget();
-    }
-    
-    // Дополнительно пробуем перехватить и переписать fetch запросы
+    setupWidget();
+
+    // Перехват fetch запросов для перенаправления на прокси
     const originalFetch = window.fetch;
     window.fetch = function(url, options) {
-      // Если URL содержит api.elevenlabs.io или api.us.elevenlabs.io, переписываем его
-      if (typeof url === 'string' && (url.includes('api.elevenlabs.io') || url.includes('api.us.elevenlabs.io'))) {
-        const urlObj = new URL(url);
-        const newUrl = `https://elevenlabs-proxy.shipaleks.workers.dev/api${urlObj.pathname}${urlObj.search}`;
-        console.log('Redirecting API call from', url, 'to', newUrl);
-        return originalFetch.call(this, newUrl, options);
-      }
-      return originalFetch.call(this, url, options);
+        if (typeof url === 'string' && (url.includes('api.elevenlabs.io') || url.includes('api.us.elevenlabs.io'))) {
+            const urlObj = new URL(url);
+            // УБИРАЕМ /api префикс - Worker ожидает прямые пути
+            const newUrl = `https://elevenlabs-proxy.shipaleks.workers.dev${urlObj.pathname}${urlObj.search}`;
+            console.log('Redirecting API call from', url, 'to', newUrl);
+            return originalFetch.call(this, newUrl, options);
+        }
+        return originalFetch.call(this, url, options);
     };
-    
-    // Перехват WebSocket соединений
+
+    // Перехват WebSocket соединений для перенаправления на прокси
     const OriginalWebSocket = window.WebSocket;
     window.WebSocket = function(url, protocols) {
-      console.log('WebSocket connection attempt to:', url);
-      
-      // Если пытаемся подключиться к ElevenLabs API, переписываем URL для прокси
-      if (url.includes('api.elevenlabs.io') || url.includes('api.us.elevenlabs.io')) {
-        const urlObj = new URL(url);
-        const newUrl = `wss://elevenlabs-proxy.shipaleks.workers.dev/api${urlObj.pathname}${urlObj.search}`;
-        console.log('Redirecting WebSocket from', url, 'to', newUrl);
-        
-        // Создаем WebSocket через наш прокси
-        return new OriginalWebSocket(newUrl, protocols);
-      }
-      
-      return new OriginalWebSocket(url, protocols);
+        console.log('WebSocket connection attempt to:', url);
+        if (url.includes('api.elevenlabs.io') || url.includes('api.us.elevenlabs.io')) {
+            const urlObj = new URL(url);
+            // УБИРАЕМ /api префикс - Worker ожидает прямые пути
+            const newUrl = `wss://elevenlabs-proxy.shipaleks.workers.dev${urlObj.pathname}${urlObj.search}`;
+            console.log('Redirecting WebSocket from', url, 'to', newUrl);
+            return new OriginalWebSocket(newUrl, protocols);
+        }
+        return new OriginalWebSocket(url, protocols);
     };
   </script>
 </body>
