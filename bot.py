@@ -167,11 +167,15 @@ async def fetch_and_upload_audio(conv_id: str, folder_id: str):
 # Base URL for public web widget (Cloudflare Pages). Set CF_BASE_URL env in Railway.
 BASE_PAGE_URL = os.getenv("CF_BASE_URL", "https://shipaleks.github.io/ux-moderator-windsurf/web/index.html")
 
-def build_interview_link(dynamic_vars):
+# URL для пользователей из России (использует Cloudflare прокси)
+RU_PAGE_URL = os.getenv("CF_RU_URL", "https://ux-ai.pages.dev/web/ru.html")
+
+def build_interview_link(dynamic_vars, is_russian=False):
     """
     Build a link to the custom web page with dynamic variables as query parameters.
-    The web page will inject these variables into the ElevenLabs widget.
+    If is_russian=True, uses the special RU page with Cloudflare proxy.
     """
+    # Prepare parameters
     params = {
         "agent_id": ELEVENLABS_BASE_AGENT_ID,
         "interview_topic": dynamic_vars.get("interview_topic", ""),
@@ -183,7 +187,10 @@ def build_interview_link(dynamic_vars):
     
     # URL encode parameters
     query_string = "&".join([f"{k}={quote(str(v))}" for k, v in params.items() if v])
-    return f"{BASE_PAGE_URL}?{query_string}"
+    
+    # Выбираем базовый URL в зависимости от параметра is_russian
+    base_url = RU_PAGE_URL if is_russian else BASE_PAGE_URL
+    return f"{base_url}?{query_string}"
 
 # ---------------------------------------------------------------------------
 # Telegram conversation states
@@ -238,15 +245,18 @@ async def duration(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         await update.message.reply_text(f"Ошибка создания папки на Google Drive: {e}")
         return ConversationHandler.END
 
-    # 2. Build interview link
+    # 2. Build interview links (обычная и для России)
     interview_link = build_interview_link(user_data)
+    ru_interview_link = build_interview_link(user_data, is_russian=True)
 
     # 3. Reply with links
     reply = (
         "Готово! \U0001F389\n\n"
         f"• Ссылка на интервью: {interview_link}\n"
+        f"• Ссылка для пользователей из России: {ru_interview_link}\n"
         f"• Папка Google Drive: {folder_info['link']}\n\n"
-        "Передайте ссылку респондентам сразу после генерации. \nАудиозаписи будут сохраняться в указанную папку. Удачи!"
+        "Передайте обычную ссылку респондентам или специальную ссылку для России. \n"
+        "Аудиозаписи будут сохраняться в указанную папку. Удачи!"
     )
     await update.message.reply_text(reply)
 

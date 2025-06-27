@@ -17,3 +17,4 @@ venv/
 # Secrets
 .env.*
 service_account.json
+sa_oneline.json
