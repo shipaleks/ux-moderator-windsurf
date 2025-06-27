@@ -31,40 +31,41 @@ async function handleWebSocket(request, env) {
   const webSocketPair = new WebSocketPair();
   const [client, server] = Object.values(webSocketPair);
   
-  // Подключаемся к целевому WebSocket серверу
-  const headers = new Headers(request.headers);
-  headers.set('xi-api-key', env.ELEVEN_KEY);
-  headers.delete('host');
-  headers.delete('origin'); // Убираем origin для избежания CORS
-  
   try {
-    // Устанавливаем соединение с ElevenLabs
-    const targetSocket = new WebSocket(targetUrl, {
-      headers: Object.fromEntries(headers.entries())
-    });
-    
-    // Проксируем сообщения от клиента к серверу
-    server.addEventListener('message', event => {
-      if (targetSocket.readyState === WebSocket.OPEN) {
-        targetSocket.send(event.data);
+    // Создаем WebSocket соединение с ElevenLabs
+    const targetWs = new WebSocket(targetUrl, [], {
+      headers: {
+        'xi-api-key': env.ELEVEN_KEY
       }
     });
     
-    // Проксируем сообщения от сервера к клиенту
-    targetSocket.addEventListener('message', event => {
+    // Принимаем WebSocket соединение от клиента
+    server.accept();
+    
+    // Проксируем сообщения от клиента к ElevenLabs
+    server.addEventListener('message', event => {
+      if (targetWs.readyState === WebSocket.OPEN) {
+        targetWs.send(event.data);
+      }
+    });
+    
+    // Проксируем сообщения от ElevenLabs к клиенту
+    targetWs.addEventListener('message', event => {
       if (server.readyState === WebSocket.OPEN) {
         server.send(event.data);
       }
     });
     
     // Обработка закрытия соединений
-    server.addEventListener('close', () => {
-      if (targetSocket.readyState === WebSocket.OPEN) {
-        targetSocket.close();
+    server.addEventListener('close', event => {
+      console.log('Client WebSocket closed');
+      if (targetWs.readyState === WebSocket.OPEN) {
+        targetWs.close();
       }
     });
     
-    targetSocket.addEventListener('close', () => {
+    targetWs.addEventListener('close', event => {
+      console.log('Target WebSocket closed');
       if (server.readyState === WebSocket.OPEN) {
         server.close();
       }
@@ -73,20 +74,17 @@ async function handleWebSocket(request, env) {
     // Обработка ошибок
     server.addEventListener('error', event => {
       console.error('Client WebSocket error:', event);
-      if (targetSocket.readyState === WebSocket.OPEN) {
-        targetSocket.close();
+      if (targetWs.readyState === WebSocket.OPEN) {
+        targetWs.close();
       }
     });
     
-    targetSocket.addEventListener('error', event => {
+    targetWs.addEventListener('error', event => {
       console.error('Target WebSocket error:', event);
       if (server.readyState === WebSocket.OPEN) {
         server.close();
       }
     });
-    
-    // Принимаем WebSocket соединение
-    server.accept();
     
     return new Response(null, {
       status: 101,
@@ -100,7 +98,7 @@ async function handleWebSocket(request, env) {
     
   } catch (error) {
     console.error('WebSocket proxy error:', error);
-    return new Response('WebSocket connection failed', { 
+    return new Response('WebSocket connection failed: ' + error.message, { 
       status: 500,
       headers: {
         'Access-Control-Allow-Origin': '*'
