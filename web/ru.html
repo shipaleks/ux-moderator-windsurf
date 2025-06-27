@@ -80,7 +80,7 @@
       // Если URL содержит api.elevenlabs.io или api.us.elevenlabs.io, переписываем его
       if (typeof url === 'string' && (url.includes('api.elevenlabs.io') || url.includes('api.us.elevenlabs.io'))) {
         const urlObj = new URL(url);
-        const newUrl = `/api${urlObj.pathname}${urlObj.search}`;
+        const newUrl = `https://elevenlabs-proxy.shipaleks.workers.dev/api${urlObj.pathname}${urlObj.search}`;
         console.log('Redirecting API call from', url, 'to', newUrl);
         return originalFetch.call(this, newUrl, options);
       }
@@ -95,12 +95,11 @@
       // Если пытаемся подключиться к ElevenLabs API, переписываем URL для прокси
       if (url.includes('api.elevenlabs.io') || url.includes('api.us.elevenlabs.io')) {
         const urlObj = new URL(url);
-        const newUrl = `/api${urlObj.pathname}${urlObj.search}`;
+        const newUrl = `wss://elevenlabs-proxy.shipaleks.workers.dev/api${urlObj.pathname}${urlObj.search}`;
         console.log('Redirecting WebSocket from', url, 'to', newUrl);
         
         // Создаем WebSocket через наш прокси
-        const wsUrl = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}${newUrl}`;
-        return new OriginalWebSocket(wsUrl, protocols);
+        return new OriginalWebSocket(newUrl, protocols);
       }
       
       return new OriginalWebSocket(url, protocols);
